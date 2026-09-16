@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FieldOps console</title>
+<link rel="icon" href="./icon-192.png">
+<link rel="stylesheet" href="./css/app.css">
+<style>
+  .shell { display: grid; grid-template-columns: 224px 1fr; min-height: 100vh; }
+
+  /* ---- sidebar ---- */
+  .rail {
+    background: var(--ink-900); color: #cadbdd;
+    display: flex; flex-direction: column; padding: 18px 0;
+    position: sticky; top: 0; height: 100vh;
+  }
+  .rail .mark { display: flex; align-items: center; gap: 9px; padding: 0 18px 22px; font-family: var(--display); font-weight: 700; font-size: 17px; letter-spacing: -0.02em; color: #fff; }
+  .rail nav { display: flex; flex-direction: column; gap: 1px; padding: 0 10px; }
+  .rail nav button {
+    display: flex; align-items: center; gap: 10px;
+    background: none; border: 0; border-radius: var(--r-sm);
+    color: #92abaf; padding: 9px 10px; font-size: 13.5px; text-align: left; width: 100%;
+  }
+  .rail nav button:hover { background: var(--ink-800); color: #e4edee; }
+  .rail nav button[aria-selected=true] { background: var(--ink-750); color: #fff; box-shadow: inset 2px 0 0 var(--amber); }
+  .rail nav button svg { flex: none; opacity: .85; }
+  .rail nav button .tally { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--amber); }
+  .rail .who { margin-top: auto; padding: 16px 18px 0; border-top: 1px solid var(--ink-700); }
+  .rail .who .name { font-family: var(--display); font-weight: 600; font-size: 13.5px; color: #e4edee; }
+
+  /* ---- content ---- */
+  .content { min-width: 0; }
+  .strip {
+    display: flex; background: #fff; border-bottom: 1px solid var(--mist-200);
+    position: sticky; top: 0; z-index: 3;
+  }
+  .stat { padding: 13px 22px; border-right: 1px solid var(--mist-100); min-width: 118px; }
+  .stat .k { font-family: var(--display); font-size: 11px; font-weight: 600; letter-spacing: .03em; color: var(--dim-light); }
+  .stat .v { font-family: var(--display); font-size: 23px; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .stat.alert .v { color: var(--bad); }
+  .strip .spacer { flex: 1; border-right: 0; }
+
+  .page { padding: 26px 26px 120px; max-width: 1240px; }
+  .page-head { margin-bottom: 20px; }
+  .page-head p { color: var(--dim-light); font-size: 13.5px; margin: 5px 0 0; max-width: 70ch; }
+  section { display: none; }
+  section.on { display: block; }
+
+  .composer { display: grid; grid-template-columns: 340px 1fr; gap: 0; }
+  @media (max-width: 1000px) { .shell { grid-template-columns: 1fr; } .rail { position: static; height: auto; } .composer { grid-template-columns: 1fr; } }
+  .composer .left { padding: 20px; border-right: 1px solid var(--mist-100); }
+  .composer .right { padding: 20px; }
+
+  /* sticky send bar */
+  .sendbar {
+    position: fixed; bottom: 0; left: 224px; right: 0; z-index: 4;
+    background: var(--ink-900); color: #cadbdd;
+    border-top: 1px solid var(--ink-700);
+    display: flex; align-items: center; gap: 18px; padding: 12px 26px;
+  }
+  @media (max-width: 1000px) { .sendbar { left: 0; } }
+  .sendbar .sum { font-family: var(--display); font-size: 14px; }
+  .sendbar .sum b { color: var(--amber); font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .sendbar .detail { font-size: 12.5px; color: var(--dim); }
+  .sendbar button { margin-left: auto; }
+  .sendbar .msg { font-size: 12.5px; }
+  .sendbar .msg.good { color: #6fd6a1; }
+  .sendbar .msg.bad { color: #f09a93; }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; font-size: 13px; }
+  .split-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .split-2 { grid-template-columns: 1fr; } }
+  .mono-cell { font-variant-numeric: tabular-nums; }
+  .empty-row td { color: var(--dim-light); text-align: center; padding: 30px; }
+</style>
+</head>
+<body class="console">
+
+<div class="shell">
+  <aside class="rail">
+    <div class="mark">
+      <svg width="19" height="19" viewBox="0 0 20 20"><rect width="20" height="20" rx="4" fill="#f5a524"/><path d="M6 14V6h7M6 10h5" stroke="#0b1a1e" stroke-width="2" stroke-linecap="round"/></svg>
+      FieldOps
+    </div>
+    <nav id="nav">
+      <button data-tab="allocate" aria-selected="true">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 4h12M2 8h8M2 12h5"/><path d="M12.5 10.5v4M10.5 12.5h4" stroke-linecap="round"/></svg>
+        Allocate work</button>
+      <button data-tab="jobs">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5.5 2v3M10.5 2v3M5.5 9l1.5 1.5L10.5 7" stroke-linecap="round"/></svg>
+        Allocated jobs<span class="tally" id="tally-jobs"></span></button>
+      <button data-tab="readings">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 12.5 6 8l3 3 4.5-6.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Readings<span class="tally" id="tally-read"></span></button>
+      <button data-tab="sites">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 14s4.5-4 4.5-7.5a4.5 4.5 0 1 0-9 0C3.5 10 8 14 8 14Z"/><circle cx="8" cy="6.5" r="1.6"/></svg>
+        Sites</button>
+      <button data-tab="staff">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 13.5c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>
+        Employees</button>
+    </nav>
+    <div class="who">
+      <div class="name" id="who"></div>
+      <button class="quiet-btn" style="padding-left:0" onclick="signOut()">Sign out</button>
+    </div>
+  </aside>
+
+  <div class="content">
+    <div class="strip" id="strip">
+      <div class="stat"><div class="k">Sites</div><div class="v" id="s-sites">—</div></div>
+      <div class="stat"><div class="k">Employees</div><div class="v" id="s-emp">—</div></div>
+      <div class="stat"><div class="k">Pending jobs</div><div class="v" id="s-pending">—</div></div>
+      <div class="stat"><div class="k">Readings today</div><div class="v" id="s-today">—</div></div>
+      <div class="stat" id="s-unsynced-wrap"><div class="k">Not in sheet</div><div class="v" id="s-unsynced">—</div></div>
+      <div class="stat spacer"></div>
+    </div>
+
+    <div class="page">
+      <!-- ============================================ allocate -->
+      <section id="allocate" class="on">
+        <div class="page-head">
+          <h1>Allocate work</h1>
+          <p>Choose the task, the crew, and the sites. Every employee you tick receives one job per site you tick,
+             and it appears on their phone immediately.</p>
+        </div>
+
+        <div class="panel">
+          <div class="composer">
+            <div class="left">
+              <div class="field">
+                <label for="task">Task</label>
+                <select id="task"></select>
+              </div>
+              <div class="field">
+                <label for="due">Complete by</label>
+                <input type="date" id="due">
+                <div class="help">Optional. Shown on the employee's job card.</div>
+              </div>
+              <div class="field">
+                <label for="notes">Instructions</label>
+                <textarea id="notes" rows="3" placeholder="Take the reading before the shift ends"></textarea>
+              </div>
+
+              <label>Employees</label>
+              <div class="picker" id="emp-list">
+                <div class="p-head">
+                  <input type="search" class="grow" placeholder="Search employees" data-search="emp">
+                </div>
+                <div class="p-body" id="emp-body"></div>
+                <div class="p-foot">
+                  <span id="emp-foot">0 selected</span>
+                  <button type="button" class="quiet-btn" data-all="emp" style="margin-left:auto">Select all</button>
+                  <button type="button" class="quiet-btn" data-none="emp">Clear</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="right">
+              <label>Sites</label>
+              <div class="picker" id="site-list">
+                <div class="p-head">
+                  <input type="search" class="grow" placeholder="Search by site name or code" data-search="site">
+                </div>
+                <div class="p-body" id="site-body"></div>
+                <div class="p-foot">
+                  <span id="site-foot">0 selected</span>
+                  <button type="button" class="quiet-btn" data-all="site" style="margin-left:auto">Select all shown</button>
+                  <button type="button" class="quiet-btn" data-none="site">Clear</button>
+                </div>
+              </div>
+              <div class="notice hidden" id="alloc-note" style="margin-top:16px"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ jobs -->
+      <section id="jobs">
+        <div class="page-head">
+          <h1>Allocated jobs</h1>
+          <p>Progress moves as each employee submits a site from the field.</p>
+        </div>
+        <div class="panel">
+          <div class="panel-body flush">
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Task</th><th>Employee</th><th style="width:200px">Sites completed</th><th>Due</th><th>Allocated</th><th>By</th><th></th></tr></thead>
+                <tbody id="jobs-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ readings -->
+      <section id="readings">
+        <div class="page-head">
+          <h1>Readings</h1>
+          <p>Every submission with its status in the TNK FD sheet.</p>
+        </div>
+        <div class="panel">
+          <div class="panel-head row">
+            <div class="grow">
+              <h3>Latest 300</h3>
+              <p style="margin:2px 0 0">Anything marked <i>failed</i> is stored safely and can be pushed again.</p>
+            </div>
+            <button class="ghost" id="resync">Retry failed sheet writes</button>
+            <span class="t-12 quiet" id="resync-msg"></span>
+          </div>
+          <div class="panel-body flush">
+            <div class="table-scroll">
+              <table>
+                <thead><tr><th>Date</th><th>Site</th><th>Employee</th><th>Tanker</th><th>DG hours</th><th>Diesel left</th><th>Sheet</th><th>Submitted</th></tr></thead>
+                <tbody id="readings-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ sites -->
+      <section id="sites">
+        <div class="page-head">
+          <h1>Sites</h1>
+          <p>Paste straight from your Google Sheet. Existing sites are updated rather than duplicated.</p>
+        </div>
+        <div class="split-2">
+          <div class="panel">
+            <div class="panel-head">
+              <h3>Import</h3>
+              <p>One site per line: <b>name, code, region, diesel-left cell</b>. Only the name is required.</p>
+            </div>
+            <div class="panel-body">
+              <div class="field">
+                <textarea id="import-text" rows="9" spellcheck="false" placeholder="Jaipur Tower 01, JP01, Rajasthan, 'TNK FD'!K4
+Ajmer Road Site, JP02, Rajasthan, 'TNK FD'!K5"></textarea>
+                <div class="help">Sites without their own cell fall back to the DIESEL_RANGE setting.</div>
+              </div>
+              <div class="notice hidden" id="import-note"></div>
+              <button id="import-go">Import sites</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head row">
+              <div class="grow"><h3>Active sites</h3></div>
+              <span class="count-pill" id="site-count">0</span>
+            </div>
+            <div class="panel-body flush">
+              <div class="table-scroll" style="max-height:52vh">
+                <table>
+                  <thead><tr><th>Name</th><th>Code</th><th>Region</th><th>Diesel cell</th></tr></thead>
+                  <tbody id="sites-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================ staff -->
+      <section id="staff">
+        <div class="page-head">
+          <h1>Employees</h1>
+          <p>These credentials are what the crew uses to sign in to the Android app.</p>
+        </div>
+        <div class="split-2">
+          <div class="panel">
+            <div class="panel-head"><h3>Add a login</h3></div>
+            <div class="panel-body">
+              <div class="field"><label for="e-name">Full name</label><input id="e-name"></div>
+              <div class="field"><label for="e-user">Username</label><input id="e-user" autocapitalize="none" spellcheck="false"></div>
+              <div class="field"><label for="e-pass">Password</label><input id="e-pass"><div class="help">At least 6 characters. You can change it later.</div></div>
+              <div class="field"><label for="e-phone">Phone</label><input id="e-phone" placeholder="Optional"></div>
+              <div class="notice hidden" id="staff-note"></div>
+              <button id="staff-go">Create login</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Crew</h3></div>
+            <div class="panel-body flush">
+              <div class="table-scroll" style="max-height:52vh">
+                <table>
+                  <thead><tr><th>Name</th><th>Username</th><th>Phone</th><th>Status</th><th></th></tr></thead>
+                  <tbody id="staff-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="sendbar" id="sendbar">
+  <div>
+    <div class="sum"><b id="job-count">0</b> jobs ready to send</div>
+    <div class="detail" id="job-detail">Pick employees and sites to begin.</div>
+  </div>
+  <span class="msg" id="send-msg"></span>
+  <button id="allocate-go" disabled>Send to employees</button>
+</div>
+
+<script src="./js/api.js"></script>
+<script>
+const me = requireRole('admin');
+document.getElementById('who').textContent = me ? me.name : '';
+
+let SITES = [], EMPLOYEES = [];
+const picked = { site: new Set(), emp: new Set() };
+const $ = (id) => document.getElementById(id);
+
+/* ---------------- navigation ---------------- */
+$('nav').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-tab]');
+  if (!btn) return;
+  document.querySelectorAll('#nav button').forEach(b => b.setAttribute('aria-selected', b === btn));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === btn.dataset.tab));
+  $('sendbar').classList.toggle('hidden', btn.dataset.tab !== 'allocate');
+  ({ jobs: loadJobs, readings: loadReadings, sites: renderSites, staff: loadStaff })[btn.dataset.tab]?.();
+});
+
+function note(el, text, kind) {
+  el.className = 'notice ' + (kind || '');
+  el.textContent = text;
+  el.classList.remove('hidden');
+}
+
+/* ---------------- pick lists ---------------- */
+function renderPick(kind, items) {
+  const search = document.querySelector(`[data-search="${kind}"]`).value.toLowerCase();
+  const body = $(kind + '-body');
+  const shown = items.filter(i => !search
+    || i.name.toLowerCase().includes(search)
+    || (i.code || '').toLowerCase().includes(search)
+    || (i.username || '').toLowerCase().includes(search));
+
+  body.innerHTML = shown.length ? shown.map(i => `
+    <label class="pick">
+      <input type="checkbox" value="${i.id}" ${picked[kind].has(i.id) ? 'checked' : ''}>
+      <span class="truncate">${esc(i.name)}</span>
+      <span class="meta">${esc(i.code || i.username || '')}</span>
+    </label>`).join('')
+    : '<div class="pick empty">Nothing matches that search.</div>';
+
+  body.dataset.shown = shown.map(i => i.id).join(',');
+  $(kind + '-foot').textContent = `${picked[kind].size} of ${items.length} selected`;
+  updateSendbar();
+}
+
+function updateSendbar() {
+  const n = picked.emp.size * picked.site.size;
+  $('job-count').textContent = n.toLocaleString();
+  $('job-detail').textContent = n
+    ? `${picked.emp.size} employee${picked.emp.size > 1 ? 's' : ''} × ${picked.site.size} site${picked.site.size > 1 ? 's' : ''}`
+    : 'Pick employees and sites to begin.';
+  $('allocate-go').disabled = !n;
+}
+
+['site', 'emp'].forEach(kind => {
+  const items = () => (kind === 'site' ? SITES : EMPLOYEES);
+  $(kind + '-body').addEventListener('change', (e) => {
+    const cb = e.target.closest('input[type=checkbox]');
+    if (!cb) return;
+    cb.checked ? picked[kind].add(Number(cb.value)) : picked[kind].delete(Number(cb.value));
+    $(kind + '-foot').textContent = `${picked[kind].size} of ${items().length} selected`;
+    updateSendbar();
+  });
+  document.querySelector(`[data-search="${kind}"]`).addEventListener('input', () => renderPick(kind, items()));
+  document.querySelector(`[data-all="${kind}"]`).addEventListener('click', () => {
+    ($(kind + '-body').dataset.shown || '').split(',').filter(Boolean).forEach(id => picked[kind].add(Number(id)));
+    renderPick(kind, items());
+  });
+  document.querySelector(`[data-none="${kind}"]`).addEventListener('click', () => {
+    picked[kind].clear(); renderPick(kind, items());
+  });
+});
+
+/* ---------------- boot ---------------- */
+async function boot() {
+  const d = await api('/admin/bootstrap');
+  SITES = d.sites; EMPLOYEES = d.employees;
+  $('task').innerHTML = d.tasks.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+  renderPick('site', SITES); renderPick('emp', EMPLOYEES);
+  $('site-count').textContent = SITES.length;
+  if (!SITES.length) note($('alloc-note'), 'No sites yet. Import them on the Sites tab before allocating work.', '');
+  loadStats();
+}
+
+async function loadStats() {
+  try {
+    const { stats } = await api('/admin/stats');
+    $('s-sites').textContent = stats.sites;
+    $('s-emp').textContent = stats.employees;
+    $('s-pending').textContent = stats.pending;
+    $('s-today').textContent = stats.today;
+    $('s-unsynced').textContent = stats.unsynced;
+    $('s-unsynced-wrap').classList.toggle('alert', stats.unsynced > 0);
+    $('tally-jobs').textContent = stats.pending || '';
+    $('tally-read').textContent = stats.unsynced || '';
+  } catch {}
+}
+boot().catch(e => note($('alloc-note'), e.message, 'bad'));
+
+/* ---------------- allocate ---------------- */
+$('allocate-go').addEventListener('click', async () => {
+  const btn = $('allocate-go'), msg = $('send-msg');
+  btn.disabled = true; btn.textContent = 'Sending…'; msg.textContent = '';
+  try {
+    const d = await api('/admin/allocate', {
+      body: {
+        task_id: Number($('task').value),
+        employee_ids: [...picked.emp],
+        site_ids: [...picked.site],
+        due_date: $('due').value || null,
+        notes: $('notes').value || null,
+      },
+    });
+    msg.className = 'msg good';
+    msg.textContent = `${d.jobs} jobs sent to ${d.assignments} employee${d.assignments > 1 ? 's' : ''}.`;
+    picked.emp.clear(); picked.site.clear();
+    renderPick('site', SITES); renderPick('emp', EMPLOYEES);
+    $('notes').value = '';
+    loadStats();
+  } catch (e) {
+    msg.className = 'msg bad';
+    msg.textContent = e.message;
+  }
+  btn.textContent = 'Send to employees';
+  updateSendbar();
+});
+
+/* ---------------- jobs ---------------- */
+const meter = (done, total) => {
+  const seg = Math.min(total, 12);
+  const on = Math.round((done / Math.max(total, 1)) * seg);
+  return `<div class="meter">${Array.from({ length: seg }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('')}</div>`;
+};
+
+async function loadJobs() {
+  const { assignments } = await api('/admin/assignments');
+  $('jobs-body').innerHTML = assignments.length ? assignments.map(a => `
+    <tr>
+      <td>${esc(a.task_name)}</td>
+      <td>${esc(a.employee_name)}</td>
+      <td>
+        <div class="row">
+          <span class="mono-cell t-12" style="min-width:46px">${a.done}/${a.total}</span>
+          <span class="grow">${meter(a.done, a.total)}</span>
+        </div>
+      </td>
+      <td class="mono-cell">${esc(a.due_date || '—')}</td>
+      <td class="mono-cell t-12 quiet">${esc(a.created_at)}</td>
+      <td class="t-13 quiet">${esc(a.assigned_by)}</td>
+      <td style="text-align:right"><button class="danger small" data-cancel="${a.id}">Cancel</button></td>
+    </tr>`).join('')
+    : '<tr class="empty-row"><td colspan="7">No work allocated yet. Start on the Allocate work tab.</td></tr>';
+}
+$('jobs-body').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-cancel]');
+  if (!btn || !confirm('Cancel this allocation? It disappears from the employee dashboard.')) return;
+  await api('/admin/assignments/' + btn.dataset.cancel, { method: 'DELETE' });
+  loadJobs(); loadStats();
+});
+
+/* ---------------- readings ---------------- */
+async function loadReadings() {
+  const { submissions } = await api('/admin/submissions');
+  $('readings-body').innerHTML = submissions.length ? submissions.map(s => {
+    const cls = s.sheet_status === 'synced' ? 'ok' : s.sheet_status === 'failed' ? 'bad' : 'warn';
+    return `<tr>
+      <td class="mono-cell">${esc(s.reading_date)}</td>
+      <td>${esc(s.site_name)}</td>
+      <td class="t-13">${esc(s.employee_name)}</td>
+      <td class="mono-cell">${esc(s.tanker_reading)}</td>
+      <td class="mono-cell">${esc(s.dg_hours)}</td>
+      <td class="mono-cell quiet">${esc(s.diesel_left ?? '—')}</td>
+      <td><span class="badge ${cls}" title="${esc(s.sheet_error || '')}"><span class="dot"></span>${esc(s.sheet_status)}</span></td>
+      <td class="mono-cell t-12 quiet">${esc(s.submitted_at)}</td>
+    </tr>`;
+  }).join('') : '<tr class="empty-row"><td colspan="8">No readings submitted yet.</td></tr>';
+}
+$('resync').addEventListener('click', async () => {
+  const el = $('resync-msg');
+  el.textContent = 'Retrying…';
+  try {
+    const d = await api('/admin/resync', { body: {} });
+    el.textContent = `${d.synced} written, ${d.remaining} still failing.`;
+    loadReadings(); loadStats();
+  } catch (e) { el.textContent = e.message; }
+});
+
+/* ---------------- sites ---------------- */
+function renderSites() {
+  $('sites-body').innerHTML = SITES.length ? SITES.map(s => `
+    <tr><td>${esc(s.name)}</td><td class="mono-cell t-13">${esc(s.code || '—')}</td>
+    <td class="t-13">${esc(s.region || '—')}</td>
+    <td class="mono-cell t-12 quiet">${esc(s.diesel_cell || 'default')}</td></tr>`).join('')
+    : '<tr class="empty-row"><td colspan="4">No sites yet. Paste your list on the left.</td></tr>';
+}
+$('import-go').addEventListener('click', async () => {
+  const btn = $('import-go');
+  btn.disabled = true; btn.textContent = 'Importing…';
+  try {
+    const d = await api('/admin/sites/import', { body: { text: $('import-text').value } });
+    note($('import-note'), `${d.imported} rows imported. ${d.total} sites are active.`, 'good');
+    await boot(); renderSites();
+  } catch (e) { note($('import-note'), e.message, 'bad'); }
+  btn.disabled = false; btn.textContent = 'Import sites';
+});
+
+/* ---------------- staff ---------------- */
+async function loadStaff() {
+  const { employees } = await api('/admin/employees');
+  $('staff-body').innerHTML = employees.length ? employees.map(u => `
+    <tr>
+      <td>${esc(u.name)}</td>
+      <td class="mono-cell t-13">${esc(u.username)}</td>
+      <td class="mono-cell t-13 quiet">${esc(u.phone || '—')}</td>
+      <td><span class="badge ${u.active ? 'ok' : 'idle'}"><span class="dot"></span>${u.active ? 'active' : 'disabled'}</span></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="quiet-btn" data-reset="${u.id}">Reset password</button>
+        <button class="quiet-btn" data-toggle="${u.id}" data-active="${u.active}">${u.active ? 'Disable' : 'Enable'}</button>
+      </td>
+    </tr>`).join('') : '<tr class="empty-row"><td colspan="5">No employee logins yet.</td></tr>';
+}
+$('staff-go').addEventListener('click', async () => {
+  try {
+    await api('/admin/employees', {
+      body: {
+        name: $('e-name').value.trim(), username: $('e-user').value.trim(),
+        password: $('e-pass').value, phone: $('e-phone').value.trim(),
+      },
+    });
+    note($('staff-note'), 'Login created. Give the username and password to the employee.', 'good');
+    ['e-name', 'e-user', 'e-pass', 'e-phone'].forEach(id => $(id).value = '');
+    loadStaff(); boot();
+  } catch (e) { note($('staff-note'), e.message, 'bad'); }
+});
+$('staff-body').addEventListener('click', async (e) => {
+  const reset = e.target.closest('[data-reset]'), toggle = e.target.closest('[data-toggle]');
+  if (reset) {
+    const pw = prompt('New password for this employee (at least 6 characters)');
+    if (!pw) return;
+    try { await api('/admin/employees/' + reset.dataset.reset, { method: 'PATCH', body: { password: pw } }); alert('Password changed.'); }
+    catch (err) { alert(err.message); }
+  }
+  if (toggle) {
+    await api('/admin/employees/' + toggle.dataset.toggle, { method: 'PATCH', body: { active: toggle.dataset.active !== '1' } });
+    loadStaff(); loadStats();
+  }
+});
+</script>
+</body>
+</html>

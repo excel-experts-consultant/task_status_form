@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FieldOps</title>
+<meta name="theme-color" content="#0b1a1e">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="stylesheet" href="./css/app.css">
+<style>
+  body { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+
+  .topbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
+    background: var(--ink-900);
+  }
+  .topbar .mark { display: flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 700; font-size: 16px; }
+  .topbar .initials {
+    margin-left: auto; width: 32px; height: 32px; border-radius: 50%;
+    display: grid; place-items: center; background: var(--ink-700);
+    font-family: var(--display); font-size: 12px; font-weight: 700; color: #cadbdd;
+    border: 1px solid var(--ink-600);
+  }
+
+  /* --- the diesel gauge: the one loud element --- */
+  .gauge {
+    margin: 0 16px 18px; padding: 14px 16px 16px;
+    background: linear-gradient(180deg, var(--ink-800), var(--ink-900));
+    border: 1px solid var(--ink-600); border-radius: 8px;
+    position: relative; overflow: hidden;
+  }
+  .gauge::before {
+    content: ''; position: absolute; inset: 0 0 auto 0; height: 2px;
+    background: linear-gradient(90deg, var(--bad) 0 14%, var(--amber) 14% 42%, var(--ink-600) 42% 100%);
+  }
+  .gauge .ticks { display: flex; gap: 3px; margin-bottom: 12px; }
+  .gauge .ticks i { flex: 1; height: 7px; background: var(--ink-600); border-radius: 1px; }
+  .gauge .ticks i:nth-child(-n+9) { background: var(--amber); opacity: .85; }
+  .gauge .read { display: flex; align-items: flex-end; gap: 8px; }
+  .gauge .value {
+    font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 0.95;
+    color: var(--amber); font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
+  }
+  .gauge .unit { font-family: var(--display); font-size: 13px; color: var(--dim); padding-bottom: 4px; }
+  .gauge .refresh {
+    margin-left: auto; background: none; border: 1px solid var(--ink-600);
+    border-radius: 50%; width: 34px; height: 34px; padding: 0;
+    display: grid; place-items: center; color: var(--dim);
+  }
+  .gauge .refresh:hover { background: var(--ink-700); }
+  .gauge .caption { font-size: 12px; color: var(--dim); margin-top: 8px; }
+  .gauge.stale .value { color: var(--dim); }
+
+  main { padding: 0 16px; max-width: 620px; margin: 0 auto; }
+  .screen { display: none; }
+  .screen.on { display: block; }
+  .screen > h1 { margin-bottom: 4px; }
+  .screen > .lede { color: var(--dim); font-size: 13px; margin-bottom: 18px; }
+
+  /* --- reminder control --- */
+  .reminder {
+    display: flex; align-items: center; gap: 12px;
+    border: 1px solid var(--ink-600); border-left: 3px solid var(--amber);
+    border-radius: var(--r); padding: 12px 14px; margin-bottom: 16px;
+    background: var(--ink-800);
+  }
+  .reminder.off { border-left-color: var(--ink-500); }
+  .reminder .txt { font-size: 13px; color: #b8cccf; }
+  .reminder button { white-space: nowrap; font-size: 12.5px; padding: 8px 12px; }
+
+  /* --- job cards --- */
+  .job {
+    border: 1px solid var(--ink-600); border-radius: 8px;
+    background: var(--ink-800); margin-bottom: 14px; overflow: hidden;
+  }
+  .job .bar { height: 3px; background: var(--amber); }
+  .job.clear .bar { background: var(--ok); }
+  .job .inner { padding: 14px 16px 16px; }
+  .job h2 { font-size: 16px; }
+  .job .stat-line { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
+  .job .stat-line .n { font-family: var(--display); font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .job .meter i { background: var(--ink-600); }
+  .job .note { font-size: 13px; color: #a9c0c3; border-left: 2px solid var(--ink-500); padding-left: 10px; margin-bottom: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12.5px; padding: 5px 10px; border-radius: 16px;
+    border: 1px solid var(--ink-600); color: #b8cccf; background: var(--ink-750);
+  }
+  .chip.done { color: var(--ok); border-color: rgba(46,158,104,.4); background: rgba(46,158,104,.09); }
+  .chip.more { border-style: dashed; color: var(--dim); }
+
+  /* --- form --- */
+  .back { background: none; border: 0; color: var(--amber); padding: 6px 0 14px; font-size: 13.5px; display: flex; align-items: center; gap: 6px; }
+  .back:hover { background: none; }
+  .readonly-field {
+    background: var(--ink-900) !important; border-color: var(--ink-600) !important;
+    color: var(--amber) !important; font-family: var(--display); font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .submitbar {
+    position: fixed; left: 0; right: 0; bottom: calc(60px + env(safe-area-inset-bottom));
+    padding: 10px 16px; background: linear-gradient(180deg, transparent, var(--ink-900) 32%);
+  }
+  .submitbar .inner { max-width: 620px; margin: 0 auto; }
+
+  /* --- bottom nav --- */
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+    display: flex; background: var(--ink-800); border-top: 1px solid var(--ink-600);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .tabbar button {
+    flex: 1; background: none; border: 0; border-radius: 0; padding: 9px 0 10px;
+    color: #6f8b90; font-size: 11px; font-family: var(--display); font-weight: 600;
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+  }
+  .tabbar button[aria-selected=true] { color: var(--amber); box-shadow: inset 0 2px 0 var(--amber); }
+  .tabbar .pip {
+    position: absolute; transform: translate(14px, -4px);
+    min-width: 16px; height: 16px; border-radius: 9px; background: var(--amber);
+    color: #241500; font-size: 10px; line-height: 16px; padding: 0 4px;
+  }
+
+  .hist {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 0; border-bottom: 1px solid var(--ink-700);
+  }
+  .hist .d { font-family: var(--display); font-weight: 600; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; min-width: 78px; }
+  .hist .vals { font-size: 12.5px; color: var(--dim); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body class="deck">
+
+<div class="topbar">
+  <span class="mark">
+    <svg width="18" height="18" viewBox="0 0 20 20"><rect width="20" height="20" rx="4" fill="#f5a524"/><path d="M6 14V6h7M6 10h5" stroke="#0b1a1e" stroke-width="2" stroke-linecap="round"/></svg>
+    FieldOps
+  </span>
+  <span class="initials" id="initials"></span>
+</div>
+
+<div class="gauge" id="gauge">
+  <div class="ticks">
+    <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+  </div>
+  <div class="read">
+    <span class="value" id="diesel">—</span>
+    <span class="unit">diesel left</span>
+    <button class="refresh" id="diesel-refresh" aria-label="Refresh diesel reading">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.2" stroke-linecap="round"/><path d="M13.6 2.2v3.2h-3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <div class="caption" id="diesel-caption">Read live from the sheet</div>
+</div>
+
+<main>
+  <!-- ==================================== jobs -->
+  <div class="screen on" id="screen-jobs">
+    <div class="reminder" id="reminder">
+      <span class="txt grow" id="reminder-text">Checking your reminders…</span>
+      <button class="ghost" id="reminder-btn">Pause</button>
+    </div>
+    <div class="notice bad hidden" id="jobs-msg"></div>
+    <div id="jobs"></div>
+  </div>
+
+  <!-- ==================================== form -->
+  <div class="screen" id="screen-form">
+    <button class="back" id="form-back">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3 5 8l5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      My jobs
+    </button>
+    <h1 id="form-title">Form of office self vehicle</h1>
+    <p class="lede" id="form-sub"></p>
+
+    <div class="field">
+      <label for="f-site">Site name</label>
+      <select id="f-site"></select>
+      <div class="help" id="f-site-left"></div>
+    </div>
+    <div class="field">
+      <label for="f-date">Date</label>
+      <input type="date" id="f-date">
+    </div>
+    <div class="field">
+      <label for="f-tanker">Tanker reading taken</label>
+      <input type="number" inputmode="decimal" step="any" id="f-tanker" placeholder="0">
+    </div>
+    <div class="field">
+      <label for="f-dg">DG hours reading</label>
+      <input type="number" inputmode="decimal" step="any" id="f-dg" placeholder="0">
+    </div>
+    <div class="field">
+      <label for="f-diesel">Diesel left</label>
+      <input id="f-diesel" class="readonly-field" readonly>
+      <div class="help">Read from the sheet. You cannot change it here.</div>
+    </div>
+
+    <div class="notice hidden" id="form-msg"></div>
+    <p class="t-12 quiet" style="margin-bottom:76px">
+      No signal? The reading stays on this phone and is sent the moment you are back online.
+    </p>
+
+    <div class="submitbar">
+      <div class="inner"><button class="block" id="f-submit">Submit reading</button></div>
+    </div>
+  </div>
+
+  <!-- ==================================== history -->
+  <div class="screen" id="screen-history">
+    <h1>Recent readings</h1>
+    <p class="lede">The last 50 readings you submitted.</p>
+    <div id="hist-list"></div>
+  </div>
+
+  <!-- ==================================== account -->
+  <div class="screen" id="screen-account">
+    <h1 id="acct-name">Account</h1>
+    <p class="lede" id="acct-user"></p>
+
+    <div class="field">
+      <label for="a-pass">Change your password</label>
+      <input id="a-pass" type="password" placeholder="New password">
+      <div class="help">At least 6 characters.</div>
+    </div>
+    <div class="notice hidden" id="acct-msg"></div>
+    <button id="a-save">Save password</button>
+
+    <hr style="border:0;border-top:1px solid var(--ink-700);margin:26px 0">
+    <button class="ghost block" onclick="signOut()">Sign out</button>
+  </div>
+</main>
+
+<nav class="tabbar" id="tabbar">
+  <button data-screen="jobs" aria-selected="true">
+    <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5.5 2v3M10.5 2v3M5.5 9l1.5 1.5L10.5 7" stroke-linecap="round"/></svg>
+    <span style="position:relative">Jobs<span class="pip hidden" id="pip"></span></span>
+  </button>
+  <button data-screen="history">
+    <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3" stroke-linecap="round"/></svg>
+    History
+  </button>
+  <button data-screen="account">
+    <svg width="19" height="19" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 13.5c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>
+    Account
+  </button>
+</nav>
+
+<script src="./js/api.js"></script>
+<script src="./js/reminders.js"></script>
+<script>
+const me = requireRole('employee');
+const $ = (id) => document.getElementById(id);
+
+if (me) {
+  $('initials').textContent = me.name.split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  $('acct-name').textContent = me.name;
+  $('acct-user').textContent = 'Signed in as ' + me.username;
+}
+
+let DASH = null, current = null;
+const QUEUE_KEY = 'fo_queue';
+
+const show = (name) => {
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === 'screen-' + name));
+  document.querySelectorAll('#tabbar button').forEach(b => b.setAttribute('aria-selected', b.dataset.screen === name));
+  $('gauge').classList.toggle('hidden', name === 'account');
+  window.scrollTo(0, 0);
+};
+const note = (el, text, kind) => { el.className = 'notice ' + (kind || ''); el.textContent = text; el.classList.remove('hidden'); };
+
+$('tabbar').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-screen]');
+  if (!btn) return;
+  show(btn.dataset.screen);
+  if (btn.dataset.screen === 'history') loadHistory();
+  if (btn.dataset.screen === 'jobs') loadDash();
+});
+
+/* ---------------- offline queue ---------------- */
+const queue = {
+  all: () => { try { return JSON.parse(localStorage.getItem(QUEUE_KEY)) || []; } catch { return []; } },
+  add(item) { const q = this.all(); q.push(item); localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); },
+  save(q) { localStorage.setItem(QUEUE_KEY, JSON.stringify(q)); },
+};
+async function flushQueue() {
+  const pending = queue.all();
+  if (!pending.length) return 0;
+  const left = [];
+  for (const item of pending) {
+    try { await api('/emp/submit', { body: item }); }
+    catch (e) { if (!/wrong|expired|Unknown|no longer/i.test(e.message)) left.push(item); }
+  }
+  queue.save(left);
+  return pending.length - left.length;
+}
+
+/* ---------------- dashboard ---------------- */
+const meterBar = (done, total) => {
+  const seg = Math.min(total, 14);
+  const on = Math.round((done / Math.max(total, 1)) * seg);
+  return `<span class="meter grow">${Array.from({ length: seg }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('')}</span>`;
+};
+
+async function loadDash() {
+  const msg = $('jobs-msg');
+  try {
+    const sent = await flushQueue();
+    DASH = await api('/emp/dashboard');
+    msg.classList.add('hidden');
+
+    $('jobs').innerHTML = DASH.assignments.length ? DASH.assignments.map(a => {
+      const done = a.sites.filter(s => s.status === 'done').length;
+      const pending = a.sites.length - done;
+      const chips = a.sites.slice(0, 8).map(s =>
+        `<span class="chip ${s.status === 'done' ? 'done' : ''}">${s.status === 'done'
+          ? '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M1.5 5.2 4 7.6 8.5 2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' : ''}${esc(s.site_name)}</span>`).join('')
+        + (a.sites.length > 8 ? `<span class="chip more">+${a.sites.length - 8} more</span>` : '');
+
+      return `<article class="job ${pending ? '' : 'clear'}">
+        <div class="bar"></div>
+        <div class="inner">
+          <h2>${esc(a.task_name)}</h2>
+          <div class="stat-line">
+            <span class="n">${done}/${a.sites.length}</span>
+            ${meterBar(done, a.sites.length)}
+            ${a.due_date ? `<span class="t-12 quiet num">due ${esc(a.due_date)}</span>` : ''}
+          </div>
+          ${a.notes ? `<div class="note">${esc(a.notes)}</div>` : ''}
+          <div class="chips">${chips}</div>
+          ${pending ? `<button data-open="${a.assignment_id}">Fill in ${pending} site${pending > 1 ? 's' : ''}</button>`
+                    : '<span class="badge ok"><span class="dot"></span>complete</span>'}
+        </div>
+      </article>`;
+    }).join('')
+      : `<div class="job"><div class="bar" style="background:var(--ink-600)"></div><div class="inner">
+           <h2>Nothing allocated</h2>
+           <p class="t-13 quiet" style="margin:6px 0 0">New jobs appear here as soon as an admin sends them. Pull down or reopen the app to check.</p>
+         </div></div>`;
+
+    if (sent) note(msg, `${sent} saved reading${sent > 1 ? 's' : ''} sent from this phone.`, 'good');
+
+    $('pip').textContent = DASH.pending || '';
+    $('pip').classList.toggle('hidden', !DASH.pending);
+    renderReminder();
+    await Reminders.update({ pending: DASH.pending, muteUntil: DASH.mute_until });
+    refreshDiesel(current?.siteId);
+  } catch (e) {
+    note(msg, navigator.onLine ? e.message : 'You are offline. Showing the jobs last loaded on this phone.', 'bad');
+  }
+}
+
+/* ---------------- reminders ---------------- */
+function renderReminder() {
+  const box = $('reminder'), txt = $('reminder-text'), btn = $('reminder-btn');
+  const { start, end } = DASH.night;
+  const isMuted = DASH.mute_until && new Date(DASH.mute_until) > new Date();
+  box.classList.toggle('off', isMuted || !DASH.pending);
+
+  if (isMuted) {
+    const at = new Date(DASH.mute_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    txt.textContent = `Reminders are off until ${at}.`;
+    btn.textContent = 'Turn on'; btn.disabled = false; btn.classList.remove('hidden');
+    btn.onclick = async () => {
+      await api('/emp/unmute', { body: {} });
+      DASH.mute_until = null; renderReminder(); Reminders.update({ muteUntil: null });
+    };
+    return;
+  }
+  if (!DASH.pending) {
+    txt.textContent = 'Everything is submitted. No reminders until new work arrives.';
+    btn.classList.add('hidden');
+    return;
+  }
+  btn.classList.remove('hidden');
+  btn.textContent = 'Pause';
+  const night = Reminders.isNight();
+  txt.textContent = night
+    ? 'Reminders run every hour. You can pause them for the night.'
+    : `Reminders run every hour. Pausing opens at ${start}:00.`;
+  btn.disabled = !night;
+  btn.onclick = async () => {
+    try {
+      const d = await api('/emp/mute', { body: {} });
+      DASH.mute_until = d.mute_until; renderReminder(); Reminders.update({ muteUntil: d.mute_until });
+    } catch (e) { note($('jobs-msg'), e.message, 'bad'); }
+  };
+}
+setInterval(() => { if (DASH) renderReminder(); }, 60000);
+
+/* ---------------- diesel ---------------- */
+async function refreshDiesel(siteId) {
+  const el = $('diesel'), cap = $('diesel-caption');
+  el.textContent = '…';
+  try {
+    const d = await api('/emp/diesel' + (siteId ? '?site_id=' + siteId : ''));
+    const blank = d.value === null || d.value === '';
+    el.textContent = blank ? '—' : d.value;
+    $('gauge').classList.toggle('stale', blank);
+    cap.textContent = d.note || (siteId && current?.siteName ? current.siteName : 'Read live from the sheet');
+    if ($('f-diesel')) $('f-diesel').value = d.value ?? '';
+  } catch { el.textContent = '—'; cap.textContent = 'Could not reach the sheet'; }
+}
+$('diesel-refresh').onclick = () => refreshDiesel(current?.siteId);
+
+/* ---------------- form ---------------- */
+$('jobs').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-open]');
+  if (!btn) return;
+  openForm(DASH.assignments.find(x => x.assignment_id === Number(btn.dataset.open)));
+});
+
+function openForm(a) {
+  const pending = a.sites.filter(s => s.status === 'pending');
+  current = { assignment: a, siteId: pending[0]?.site_id, siteName: pending[0]?.site_name };
+  $('form-title').textContent = a.task_name;
+  $('form-sub').textContent = a.notes || 'One form per site.';
+  $('f-site').innerHTML = pending.map(s => `<option value="${s.site_id}">${esc(s.site_name)}</option>`).join('');
+  $('f-site-left').textContent = `${pending.length} site${pending.length > 1 ? 's' : ''} still to do`;
+  $('f-date').value = new Date().toISOString().slice(0, 10);
+  $('f-tanker').value = ''; $('f-dg').value = '';
+  $('form-msg').classList.add('hidden');
+  refreshDiesel(current.siteId);
+  show('form');
+}
+
+$('f-site').addEventListener('change', (e) => {
+  current.siteId = Number(e.target.value);
+  current.siteName = e.target.selectedOptions[0]?.textContent;
+  refreshDiesel(current.siteId);
+});
+$('form-back').onclick = () => { show('jobs'); loadDash(); };
+
+$('f-submit').addEventListener('click', async () => {
+  const el = $('form-msg'), btn = $('f-submit');
+  const payload = {
+    task_key: 'office_self_vehicle',
+    assignment_id: current.assignment.assignment_id,
+    site_id: Number($('f-site').value),
+    reading_date: $('f-date').value,
+    tanker_reading: $('f-tanker').value,
+    dg_hours: $('f-dg').value,
+    diesel_left: $('f-diesel').value,
+    client_uuid: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
+  };
+  if (!payload.site_id) return note(el, 'Pick a site.', 'bad');
+  if (!payload.reading_date) return note(el, 'Pick the date.', 'bad');
+  if (payload.tanker_reading === '') return note(el, 'Enter the tanker reading.', 'bad');
+  if (payload.dg_hours === '') return note(el, 'Enter the DG hours reading.', 'bad');
+
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const d = await api('/emp/submit', { body: payload });
+    note(el, d.sheet === 'synced'
+      ? 'Submitted and written to the TNK FD sheet.'
+      : 'Submitted. The sheet write failed and your admin will push it again.', 'good');
+    setTimeout(() => { show('jobs'); loadDash(); }, 850);
+  } catch (e) {
+    if (!navigator.onLine || /fetch|network/i.test(e.message)) {
+      queue.add(payload);
+      note(el, 'Saved on this phone. It will be sent when you have signal.', '');
+      setTimeout(() => show('jobs'), 850);
+    } else { note(el, e.message, 'bad'); }
+  }
+  btn.disabled = false; btn.textContent = 'Submit reading';
+});
+
+/* ---------------- history ---------------- */
+async function loadHistory() {
+  try {
+    const { submissions } = await api('/emp/history');
+    $('hist-list').innerHTML = submissions.length ? submissions.map(s => `
+      <div class="hist">
+        <span class="d">${esc(s.reading_date)}</span>
+        <span class="grow truncate">${esc(s.site_name)}<div class="vals">tanker ${esc(s.tanker_reading)} · DG ${esc(s.dg_hours)}</div></span>
+        <span class="badge ${s.sheet_status === 'synced' ? 'ok' : 'warn'}"><span class="dot"></span>${esc(s.sheet_status)}</span>
+      </div>`).join('')
+      : '<p class="quiet t-13">You have not submitted any readings yet.</p>';
+  } catch (e) { $('hist-list').innerHTML = `<p class="quiet t-13">${esc(e.message)}</p>`; }
+}
+
+/* ---------------- account ---------------- */
+$('a-save').addEventListener('click', async () => {
+  try {
+    await api('/auth/password', { body: { password: $('a-pass').value } });
+    note($('acct-msg'), 'Password changed. Use it next time you sign in.', 'good');
+    $('a-pass').value = '';
+  } catch (e) { note($('acct-msg'), e.message, 'bad'); }
+});
+
+/* ---------------- start ---------------- */
+(async () => {
+  await loadDash();
+  await Reminders.init({
+    night: DASH?.night || { start: 21, end: 6 },
+    pending: DASH?.pending || 0,
+    muteUntil: DASH?.mute_until || null,
+  });
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
+})();
+
+window.addEventListener('online', loadDash);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadDash(); });
+</script>
+</body>
+</html>
