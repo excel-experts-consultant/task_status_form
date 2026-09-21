@@ -14,7 +14,3 @@ NIGHT_END = "6"
 binding = "DB"
 database_name = "fieldops"
 database_id = "4fb13f58-2710-4c0e-8592-150ad530b1d1"
-
-# Secrets are NOT set here. Run these once:
-#   npx wrangler pages secret put SESSION_SECRET
-#   npx wrangler pages secret put GOOGLE_SERVICE_ACCOUNT
