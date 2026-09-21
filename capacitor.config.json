@@ -1,0 +1,13 @@
+{
+  "appId": "com.dashboarddr.fieldops",
+  "appName": "FieldOps",
+  "webDir": "public",
+  "android": { "allowMixedContent": false },
+  "server": { "androidScheme": "https" },
+  "plugins": {
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon",
+      "iconColor": "#FFB020"
+    }
+  }
+}

@@ -1,0 +1,35 @@
+# Builds the employee APK in the cloud so you never need Android Studio.
+# Push to main, then download the APK from the run's Artifacts section.
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: android-actions/setup-android@v3
+
+      - run: npm install
+      - name: Create the android project if it is not committed
+        run: |
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android
+      - name: Allow notifications and internet
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          grep -q POST_NOTIFICATIONS $MANIFEST || sed -i \
+            's#<application#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n\n    <application#' $MANIFEST
+      - run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fieldops-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
