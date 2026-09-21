@@ -2,7 +2,7 @@
    Inside the Android build the page is served from the APK itself, so calls
    must go to the deployed Pages URL — set it once here. */
 
-window.FIELDOPS_API = 'https://fieldops-bi0.pages.dev/'; // <- change to your Pages domain
+window.FIELDOPS_API = 'https://fieldops-bi0.pages.dev'; // <- change to your Pages domain
 
 const BASE = (window.Capacitor || location.protocol === 'file:') ? window.FIELDOPS_API : '';
 
