@@ -24,18 +24,17 @@ jobs:
       - name: Accept Android SDK licenses
         run: yes | sdkmanager --licenses || true
 
+      # Same signing key every build, so a new APK installs over the old one.
+      - name: Use the project's fixed debug key
+        run: mkdir -p ~/.android && cp ci/debug.keystore ~/.android/debug.keystore
+
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
-      - name: Add Android platform
-        run: |
-          if [ ! -d android ]; then
-            npx cap add android
-          else
-            echo "android/ already present"
-          fi
+      - name: Create Android project
+        run: npx cap add android
 
-      - name: Sync web assets
+      - name: Copy web app into Android project
         run: npx cap sync android
 
       - name: Add notification permissions
@@ -45,14 +44,17 @@ jobs:
             's|<application|<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n\n    <application|' \
             "$M"
 
-      - name: Build debug APK
+      - name: Build APK
         working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk FieldOps.apk
+
       - uses: actions/upload-artifact@v4
         with:
-          name: fieldops-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: FieldOps-APK
+          path: FieldOps.apk
           if-no-files-found: error

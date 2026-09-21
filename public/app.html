@@ -499,9 +499,6 @@ $('a-save').addEventListener('click', async () => {
     pending: DASH?.pending || 0,
     muteUntil: DASH?.mute_until || null,
   });
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
-  }
 })();
 
 window.addEventListener('online', loadDash);

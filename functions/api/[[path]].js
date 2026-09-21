@@ -4,7 +4,7 @@
  *
  * Bindings expected (see wrangler.toml / Pages dashboard):
  *   DB                      D1 database
- *   SESSION_SECRET          secret, any long random string
+ *   SESSION_SECRET          optional secret; if absent one is generated and kept in D1
  *   GOOGLE_SERVICE_ACCOUNT  secret, the full service-account JSON as one line
  *   SHEET_ID                var, the spreadsheet id
  *   SHEET_TAB               var, default "TNK FD"
@@ -53,15 +53,31 @@ async function hmac(secret, msg) {
   return b64url(await crypto.subtle.sign('HMAC', key, enc.encode(msg)));
 }
 
+let secretCache = null;
+
+/** Dashboard secret if set; otherwise a random one generated once and kept in D1. */
+async function sessionSecret(env) {
+  if (env.SESSION_SECRET && String(env.SESSION_SECRET).length >= 16) return env.SESSION_SECRET;
+  if (secretCache) return secretCache;
+  let row = await env.DB.prepare("SELECT value FROM config WHERE key = 'session_secret'").first();
+  if (!row) {
+    const fresh = hex(crypto.getRandomValues(new Uint8Array(32)));
+    await env.DB.prepare("INSERT OR IGNORE INTO config (key, value) VALUES ('session_secret', ?)").bind(fresh).run();
+    row = await env.DB.prepare("SELECT value FROM config WHERE key = 'session_secret'").first();
+  }
+  secretCache = row.value;
+  return secretCache;
+}
+
 async function signToken(env, payload) {
   const body = b64url(enc.encode(JSON.stringify(payload)));
-  return `${body}.${await hmac(env.SESSION_SECRET, body)}`;
+  return `${body}.${await hmac(await sessionSecret(env), body)}`;
 }
 
 async function readToken(env, token) {
   if (!token || !token.includes('.')) return null;
   const [body, sig] = token.split('.');
-  if ((await hmac(env.SESSION_SECRET, body)) !== sig) return null;
+  if ((await hmac(await sessionSecret(env), body)) !== sig) return null;
   try {
     const payload = JSON.parse(atob(body.replace(/-/g, '+').replace(/_/g, '/')));
     if (payload.exp && payload.exp < Date.now()) return null;
@@ -228,6 +244,33 @@ export async function onRequest(context) {
 }
 
 async function route({ path, method, body, url, request, env }) {
+  /* ---------- health: open /api/health in a browser to see what is configured ---------- */
+  if (path === '/health') {
+    const out = {
+      ok: true,
+      version: '2.0',
+      database: 'missing — add the DB binding in Pages settings',
+      users: null,
+      session_secret: env.SESSION_SECRET ? 'dashboard' : 'auto (stored in D1)',
+      sheet_id: env.SHEET_ID ? 'set' : 'missing',
+      google_service_account: env.GOOGLE_SERVICE_ACCOUNT ? 'set' : 'not set yet — sheet sync is off',
+    };
+    if (env.DB) {
+      try {
+        const r = await env.DB.prepare("SELECT role, COUNT(*) AS n FROM users GROUP BY role").all();
+        out.database = 'connected';
+        out.users = Object.fromEntries(r.results.map((x) => [x.role, x.n]));
+      } catch (e) { out.database = 'error: ' + e.message; }
+    }
+    if (env.GOOGLE_SERVICE_ACCOUNT && env.SHEET_ID && env.DIESEL_RANGE) {
+      try { out.diesel_left_test = await readRange(env, env.DIESEL_RANGE); }
+      catch (e) { out.diesel_left_test = 'error: ' + e.message; }
+    }
+    return json(out);
+  }
+
+  if (!env.DB) return fail('Database is not connected. Add the DB binding in Cloudflare Pages settings.', 500);
+
   /* ---------- auth ---------- */
 
   if (path === '/auth/login' && method === 'POST') {

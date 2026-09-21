@@ -2,7 +2,7 @@
    Inside the Android build the page is served from the APK itself, so calls
    must go to the deployed Pages URL — set it once here. */
 
-window.FIELDOPS_API = 'https://fieldops-bi0.pages.dev'; // <- change to your Pages domain
+window.FIELDOPS_API = 'https://fieldops-bi0.pages.dev'; // your live Pages URL
 
 const BASE = (window.Capacitor || location.protocol === 'file:') ? window.FIELDOPS_API : '';
 
@@ -43,3 +43,14 @@ function signOut() { store.clear(); location.href = './index.html'; }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* Remove the offline cache shipped in v1. It broke page loads on Cloudflare Pages,
+   so any browser that still has it gets it cleared on its next visit. */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations()
+    .then((regs) => regs.forEach((r) => r.unregister()))
+    .catch(() => {});
+}
+if (window.caches) {
+  caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+}

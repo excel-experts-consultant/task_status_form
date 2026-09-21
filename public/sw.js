@@ -1,28 +1,9 @@
-// Cache the shell so the app opens on a bad connection. API calls always go to the network.
-const CACHE = 'fieldops-v2';
-const SHELL = [
-  './', './index.html', './app.html', './css/app.css',
-  './js/api.js', './js/reminders.js', './manifest.json',
-  './icon-192.png', './icon-512.png',
-  './fonts/archivo-latin-600-normal.woff2', './fonts/archivo-latin-700-normal.woff2',
-  './fonts/ibm-plex-sans-latin-400-normal.woff2', './fonts/ibm-plex-sans-latin-500-normal.woff2',
-];
-
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
-});
-self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((keys) =>
-    Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
-});
-self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.pathname.startsWith('/api/')) return;
-  e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request).then((res) => {
-      const copy = res.clone();
-      caches.open(CACHE).then((c) => c.put(e.request, copy));
-      return res;
-    }).catch(() => caches.match('./index.html'))),
-  );
+// v2: this worker exists only to remove the v1 offline cache from browsers that installed it.
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    for (const key of await caches.keys()) await caches.delete(key);
+    await self.registration.unregister();
+    for (const client of await self.clients.matchAll({ type: 'window' })) client.navigate(client.url);
+  })());
 });

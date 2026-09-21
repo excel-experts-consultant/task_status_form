@@ -1,17 +1,17 @@
 /**
- * Generates seed-users.sql (hashed, safe to commit nowhere) and users.csv (the
- * plain passwords — hand these out, then delete the file).
+ * Writes private/seed-users.sql (hashed) and private/logins.csv (plain passwords).
+ * The private folder is git-ignored, so none of this reaches GitHub.
  *
- *   node scripts/create-users.mjs                 25 admins, 0 employees
- *   node scripts/create-users.mjs 25 10           25 admins, 10 employees
+ *   node scripts/create-users.mjs            25 admins, 5 employees
+ *   node scripts/create-users.mjs 25 10      25 admins, 10 employees
  *
  * Hashing matches the Worker exactly: PBKDF2-SHA256, 100000 iterations, 32 bytes.
  */
 import { pbkdf2Sync, randomBytes } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 
 const adminCount = Number(process.argv[2] || 25);
-const empCount = Number(process.argv[3] || 0);
+const empCount = Number(process.argv[3] ?? 5);
 
 const hash = (password) => {
   const salt = randomBytes(16).toString('hex');
@@ -44,6 +44,8 @@ for (let i = 1; i <= empCount; i++) {
   add('employee', `emp${n}`, `Employee ${n}`);
 }
 
-writeFileSync(new URL('../seed-users.sql', import.meta.url), sql.join('\n') + '\n');
-writeFileSync(new URL('../users.csv', import.meta.url), csv.join('\n') + '\n');
-console.log(`Wrote seed-users.sql and users.csv — ${adminCount} admins, ${empCount} employees.`);
+const dir = new URL('../private/', import.meta.url);
+mkdirSync(dir, { recursive: true });
+writeFileSync(new URL('seed-users.sql', dir), sql.join('\n') + '\n');
+writeFileSync(new URL('logins.csv', dir), csv.join('\n') + '\n');
+console.log(`Created ${adminCount} admin and ${empCount} employee logins in private\\logins.csv`);

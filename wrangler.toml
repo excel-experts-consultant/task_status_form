@@ -14,3 +14,6 @@ NIGHT_END = "6"
 binding = "DB"
 database_name = "fieldops"
 database_id = "4fb13f58-2710-4c0e-8592-150ad530b1d1"
+
+# The only secret you still add in the dashboard (Production) is GOOGLE_SERVICE_ACCOUNT.
+# SESSION_SECRET is optional now; if it is missing the app generates one and keeps it in D1.

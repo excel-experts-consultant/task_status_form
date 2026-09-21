@@ -1,5 +1,5 @@
 -- FieldOps schema (Cloudflare D1 / SQLite)
--- Run: npx wrangler d1 execute fieldops --remote --file=./schema.sql
+-- Run by setup.bat. Re-running it WIPES all data and starts fresh.
 
 DROP TABLE IF EXISTS submissions;
 DROP TABLE IF EXISTS assignment_sites;
@@ -7,6 +7,12 @@ DROP TABLE IF EXISTS assignments;
 DROP TABLE IF EXISTS sites;
 DROP TABLE IF EXISTS tasks;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS config;
+
+CREATE TABLE config (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 
 CREATE TABLE users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
