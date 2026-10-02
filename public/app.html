@@ -179,6 +179,10 @@
       <span class="txt grow" id="reminder-text">Checking your reminders…</span>
       <button class="ghost" id="reminder-btn">Pause</button>
     </div>
+    <button class="ghost block" id="go-refill" style="margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="2.5" width="6" height="11" rx="1"/><path d="M8.5 6h2.2a1.3 1.3 0 0 1 1.3 1.3v3.4a1.1 1.1 0 0 0 2.2 0V5.4L12 3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 6h4" stroke-linecap="round"/></svg>
+      Diesel refilling
+    </button>
     <div class="notice bad hidden" id="jobs-msg"></div>
     <div id="jobs"></div>
   </div>
@@ -222,6 +226,38 @@
 
     <div class="submitbar">
       <div class="inner"><button class="block" id="f-submit">Submit reading</button></div>
+    </div>
+  </div>
+
+  <!-- ==================================== refilling -->
+  <div class="screen" id="screen-refill">
+    <button class="back" id="refill-back">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3 5 8l5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      My jobs
+    </button>
+    <h1>Diesel refilling</h1>
+    <p class="lede">A standalone refilling entry. Not tied to any allocated job.</p>
+
+    <div class="field">
+      <label for="r-site">Site</label>
+      <input type="text" id="r-site" placeholder="Site name" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="r-credit">Credit litres</label>
+      <input type="number" inputmode="decimal" step="any" id="r-credit" placeholder="0">
+    </div>
+    <div class="field">
+      <label for="r-meter">Meter reading</label>
+      <input type="number" inputmode="decimal" step="any" id="r-meter" placeholder="0">
+    </div>
+
+    <div class="notice hidden" id="refill-msg"></div>
+    <p class="t-12 quiet" style="margin-bottom:76px">
+      No signal? The entry stays on this phone and is sent the moment you are back online.
+    </p>
+
+    <div class="submitbar">
+      <div class="inner"><button class="block" id="r-submit">Submit refilling</button></div>
     </div>
   </div>
 
@@ -351,6 +387,7 @@ async function loadDash() {
   const msg = $('jobs-msg');
   try {
     const sent = await flushQueue();
+    await flushRefillQueue();
     DASH = await api('/emp/dashboard');
     msg.classList.add('hidden');
 
@@ -537,6 +574,61 @@ $('f-submit').addEventListener('click', async () => {
     } else { note(el, e.message, 'bad'); }
   }
   btn.disabled = false; btn.textContent = 'Submit reading';
+});
+
+/* ---------------- refilling ---------------- */
+const REFILL_QUEUE_KEY = 'fo_refill_queue';
+const refillQueue = {
+  all: () => { try { return JSON.parse(localStorage.getItem(REFILL_QUEUE_KEY)) || []; } catch { return []; } },
+  add(item) { const q = this.all(); q.push(item); localStorage.setItem(REFILL_QUEUE_KEY, JSON.stringify(q)); },
+  save(q) { localStorage.setItem(REFILL_QUEUE_KEY, JSON.stringify(q)); },
+};
+async function flushRefillQueue() {
+  const pending = refillQueue.all();
+  if (!pending.length) return 0;
+  const left = [];
+  for (const item of pending) {
+    try { await api('/emp/refill', { body: item }); }
+    catch (e) { if (!/wrong|expired|Enter|required/i.test(e.message)) left.push(item); }
+  }
+  refillQueue.save(left);
+  return pending.length - left.length;
+}
+
+$('go-refill').onclick = () => {
+  $('r-site').value = ''; $('r-credit').value = ''; $('r-meter').value = '';
+  $('refill-msg').classList.add('hidden');
+  show('refill');
+};
+$('refill-back').onclick = () => { show('jobs'); loadDash(); };
+
+$('r-submit').addEventListener('click', async () => {
+  const el = $('refill-msg'), btn = $('r-submit');
+  const payload = {
+    site: $('r-site').value.trim(),
+    credit_litres: $('r-credit').value,
+    meter_reading: $('r-meter').value,
+    client_uuid: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
+  };
+  if (!payload.site) return note(el, 'Enter the site.', 'bad');
+  if (payload.credit_litres === '') return note(el, 'Enter the credit litres.', 'bad');
+  if (payload.meter_reading === '') return note(el, 'Enter the meter reading.', 'bad');
+
+  btn.disabled = true; btn.textContent = 'Submitting…';
+  try {
+    const d = await api('/emp/refill', { body: payload });
+    note(el, d.sheet === 'synced'
+      ? 'Submitted and written to the TNK FD sheet.'
+      : 'Submitted. The sheet write failed and will be retried.', 'good');
+    setTimeout(() => { show('jobs'); loadDash(); }, 850);
+  } catch (e) {
+    if (!navigator.onLine || /fetch|network/i.test(e.message)) {
+      refillQueue.add(payload);
+      note(el, 'Saved on this phone. It will be sent when you have signal.', '');
+      setTimeout(() => show('jobs'), 850);
+    } else { note(el, e.message, 'bad'); }
+  }
+  btn.disabled = false; btn.textContent = 'Submit refilling';
 });
 
 /* ---------------- history ---------------- */

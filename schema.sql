@@ -3,6 +3,7 @@
 
 DROP TABLE IF EXISTS reassignments;
 DROP TABLE IF EXISTS removal_requests;
+DROP TABLE IF EXISTS refills;
 DROP TABLE IF EXISTS submissions;
 DROP TABLE IF EXISTS assignment_sites;
 DROP TABLE IF EXISTS assignments;
@@ -88,6 +89,20 @@ CREATE TABLE submissions (
 );
 CREATE INDEX idx_sub_emp ON submissions(employee_id, submitted_at);
 CREATE INDEX idx_sub_sync ON submissions(sheet_status);
+
+-- Standalone diesel-refilling log, filed by employees and not tied to a job.
+CREATE TABLE refills (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  employee_id   INTEGER NOT NULL REFERENCES users(id),
+  site_text     TEXT NOT NULL,
+  credit_litres TEXT NOT NULL,
+  meter_reading TEXT NOT NULL,
+  client_uuid   TEXT UNIQUE,
+  sheet_status  TEXT NOT NULL DEFAULT 'synced',
+  sheet_row     TEXT,
+  sheet_error   TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- An employee asking the admin to take the untouched sites off a job
 -- they have already partly completed.

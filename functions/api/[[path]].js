@@ -136,24 +136,13 @@ async function readRange(env, range) {
   return data.values?.[0]?.[0] ?? '';
 }
 
-/**
- * Append one row to the TNK FD sheet.
- *   Column A  index 0  Date time
- *   Column B  index 1  Site name
- *   Column C  index 2  Employee who took the reading
- *   Column E  index 4  Tanker reading  ("Actual Reading")
- *   Column F  index 5  DG hours reading
- * Column H (Dsl Left) is a sheet formula and is never written here.
- */
-async function appendReading(env, tab, { dateTime, siteName, employeeName, dgHours, tankerReading }) {
+/** Append one row to the sheet, writing only the given column indexes. */
+async function appendRow(env, tab, cells) {
   const token = await googleToken(env);
-  const row = ['', '', '', '', '', ''];
-  row[0] = dateTime;
-  row[1] = siteName;
-  row[2] = employeeName || '';
-  row[4] = tankerReading;
-  row[5] = dgHours;
-  const range = `${tab}!A:F`;
+  const width = Math.max(...Object.keys(cells).map(Number)) + 1;
+  const row = Array.from({ length: width }, () => '');
+  for (const [i, v] of Object.entries(cells)) row[Number(i)] = v ?? '';
+  const range = `${tab}!A:K`;
   const res = await fetch(
     sheetsUrl(env, `/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`),
     {
@@ -165,6 +154,30 @@ async function appendReading(env, tab, { dateTime, siteName, employeeName, dgHou
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || `Sheets append failed (${res.status})`);
   return data.updates?.updatedRange || '';
+}
+
+/**
+ * A tanker / DG reading from an allocated job.
+ *   A (0)  Date time
+ *   B (1)  Site name
+ *   F (5)  DG hours reading
+ *   I (8)  Tanker reading  ("Actual Reading")
+ *   K (10) Employee who took the reading
+ */
+function appendReading(env, tab, { dateTime, siteName, employeeName, dgHours, tankerReading }) {
+  return appendRow(env, tab, { 0: dateTime, 1: siteName, 5: dgHours, 8: tankerReading, 10: employeeName || '' });
+}
+
+/**
+ * A diesel-refilling entry — standalone, not tied to any admin job.
+ *   A (0)  Date time
+ *   B (1)  Site (free text)
+ *   C (2)  Credit litres
+ *   I (8)  Meter reading
+ *   K (10) Employee who refilled
+ */
+function appendRefill(env, tab, { dateTime, site, creditLitres, meterReading, employeeName }) {
+  return appendRow(env, tab, { 0: dateTime, 1: site, 2: creditLitres, 8: meterReading, 10: employeeName || '' });
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -722,6 +735,44 @@ async function route({ path, method, body, url, request, env }) {
         sheet = { status: 'failed', range: '', error: err.message };
       }
       await env.DB.prepare('UPDATE submissions SET sheet_status = ?, sheet_row = ?, sheet_error = ? WHERE id = ?')
+        .bind(sheet.status, sheet.range, sheet.error, row.id).run();
+
+      return json({ ok: true, id: row.id, sheet: sheet.status, sheet_error: sheet.error });
+    }
+
+    /**
+     * Diesel refilling — a standalone entry the employee files anytime.
+     * Not linked to any allocated job or to the admin dashboard.
+     *   Site -> B, Credit litres -> C, Meter reading -> I, Employee -> K, now -> A
+     */
+    if (path === '/emp/refill' && method === 'POST') {
+      const site = String(body.site || '').trim();
+      const creditLitres = String(body.credit_litres || '').trim();
+      const meterReading = String(body.meter_reading || '').trim();
+      if (!site) return fail('Enter the site');
+      if (!creditLitres) return fail('Enter the credit litres');
+      if (!meterReading) return fail('Enter the meter reading');
+
+      if (body.client_uuid) {
+        const dupe = await env.DB.prepare('SELECT id FROM refills WHERE client_uuid = ?').bind(body.client_uuid).first();
+        if (dupe) return json({ ok: true, duplicate: true, id: dupe.id });
+      }
+
+      const row = await env.DB.prepare(`
+        INSERT INTO refills (employee_id, site_text, credit_litres, meter_reading, client_uuid)
+        VALUES (?, ?, ?, ?, ?) RETURNING id
+      `).bind(emp.id, site, creditLitres, meterReading, body.client_uuid || null).first();
+
+      let sheet = { status: 'synced', range: '', error: null };
+      try {
+        sheet.range = await appendRefill(env, env.SHEET_TAB || 'TNK FD', {
+          dateTime: stamp(env.TIMEZONE),
+          site, creditLitres, meterReading, employeeName: emp.name,
+        });
+      } catch (err) {
+        sheet = { status: 'failed', range: '', error: err.message };
+      }
+      await env.DB.prepare('UPDATE refills SET sheet_status = ?, sheet_row = ?, sheet_error = ? WHERE id = ?')
         .bind(sheet.status, sheet.range, sheet.error, row.id).run();
 
       return json({ ok: true, id: row.id, sheet: sheet.status, sheet_error: sheet.error });
