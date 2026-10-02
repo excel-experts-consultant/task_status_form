@@ -136,48 +136,51 @@ async function readRange(env, range) {
   return data.values?.[0]?.[0] ?? '';
 }
 
-/** Append one row to the sheet, writing only the given column indexes. */
-async function appendRow(env, tab, cells) {
+/**
+ * Write one row, putting each value in an EXACT column (A, B, …) at the next
+ * free row. We use a read + targeted batchUpdate rather than Sheets "append"
+ * because append auto-detects the table and was shifting rows onto the wrong
+ * columns (it latched onto the solid "Dsl Left" column H). Writing named cells
+ * also means the DSL% / Dsl Left formula columns are never overwritten.
+ */
+async function writeRow(env, tab, cells) {
   const token = await googleToken(env);
-  const width = Math.max(...Object.keys(cells).map(Number)) + 1;
-  const row = Array.from({ length: width }, () => '');
-  for (const [i, v] of Object.entries(cells)) row[Number(i)] = v ?? '';
-  const range = `${tab}!A:K`;
-  const res = await fetch(
-    sheetsUrl(env, `/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`),
-    {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, ...JSON_HEADERS },
-      body: JSON.stringify({ values: [row] }),
-    },
-  );
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || `Sheets append failed (${res.status})`);
-  return data.updates?.updatedRange || '';
+  // Next free row = one past the last row that has anything in column A.
+  const look = await fetch(sheetsUrl(env, `/values/${encodeURIComponent(`${tab}!A:A`)}`), {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const lookData = await look.json();
+  if (!look.ok) throw new Error(lookData.error?.message || `Sheets read failed (${look.status})`);
+  const nextRow = (lookData.values?.length || 0) + 1;
+
+  const data = Object.entries(cells).map(([col, v]) => ({
+    range: `${tab}!${col}${nextRow}`,
+    values: [[v ?? '']],
+  }));
+  const res = await fetch(sheetsUrl(env, `/values:batchUpdate`), {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}`, ...JSON_HEADERS },
+    body: JSON.stringify({ valueInputOption: 'USER_ENTERED', data }),
+  });
+  const out = await res.json();
+  if (!res.ok) throw new Error(out.error?.message || `Sheets write failed (${res.status})`);
+  return `${tab}!A${nextRow}`;
 }
 
 /**
  * A tanker / DG reading from an allocated job.
- *   A (0)  Date time
- *   B (1)  Site name
- *   F (5)  DG hours reading
- *   I (8)  Tanker reading  ("Actual Reading")
- *   K (10) Employee who took the reading
+ *   A Date time · B Site · F DG Reading · I Meter/Actual Reading · K Driver
  */
 function appendReading(env, tab, { dateTime, siteName, employeeName, dgHours, tankerReading }) {
-  return appendRow(env, tab, { 0: dateTime, 1: siteName, 5: dgHours, 8: tankerReading, 10: employeeName || '' });
+  return writeRow(env, tab, { A: dateTime, B: siteName, F: dgHours, I: tankerReading, K: employeeName || '' });
 }
 
 /**
  * A diesel-refilling entry — standalone, not tied to any admin job.
- *   A (0)  Date time
- *   B (1)  Site (free text)
- *   C (2)  Credit litres
- *   I (8)  Meter reading
- *   K (10) Employee who refilled
+ *   A Date time · B Site · C Credit litres · I Meter reading · K Driver
  */
 function appendRefill(env, tab, { dateTime, site, creditLitres, meterReading, employeeName }) {
-  return appendRow(env, tab, { 0: dateTime, 1: site, 2: creditLitres, 8: meterReading, 10: employeeName || '' });
+  return writeRow(env, tab, { A: dateTime, B: site, C: creditLitres, I: meterReading, K: employeeName || '' });
 }
 
 /* ------------------------------------------------------------------ helpers */
