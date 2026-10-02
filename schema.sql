@@ -1,18 +1,14 @@
 -- FieldOps schema (Cloudflare D1 / SQLite)
--- Run by setup.bat. Re-running it WIPES all data and starts fresh.
+-- Run: npx wrangler d1 execute fieldops --remote --file=./schema.sql
 
+DROP TABLE IF EXISTS reassignments;
+DROP TABLE IF EXISTS removal_requests;
 DROP TABLE IF EXISTS submissions;
 DROP TABLE IF EXISTS assignment_sites;
 DROP TABLE IF EXISTS assignments;
 DROP TABLE IF EXISTS sites;
 DROP TABLE IF EXISTS tasks;
 DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS config;
-
-CREATE TABLE config (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
 
 CREATE TABLE users (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,6 +53,8 @@ CREATE TABLE assignments (
   due_date    TEXT,
   notes       TEXT,
   status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','done','cancelled')),
+  -- set when this job was created by moving sites off another employee's job
+  source_assignment_id INTEGER REFERENCES assignments(id),
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX idx_assign_emp ON assignments(employee_id, status);
@@ -90,6 +88,37 @@ CREATE TABLE submissions (
 );
 CREATE INDEX idx_sub_emp ON submissions(employee_id, submitted_at);
 CREATE INDEX idx_sub_sync ON submissions(sheet_status);
+
+-- An employee asking the admin to take the untouched sites off a job
+-- they have already partly completed.
+CREATE TABLE removal_requests (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  assignment_id INTEGER NOT NULL REFERENCES assignments(id) ON DELETE CASCADE,
+  requested_by  INTEGER NOT NULL REFERENCES users(id),
+  reason        TEXT,
+  status        TEXT NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open','resolved','declined','withdrawn')),
+  admin_note    TEXT,
+  resolved_by   INTEGER REFERENCES users(id),
+  resolved_at   TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_rr_status ON removal_requests(status, created_at);
+CREATE INDEX idx_rr_assign ON removal_requests(assignment_id, status);
+
+-- Audit trail: one row per site actually moved from one employee to another.
+CREATE TABLE reassignments (
+  id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_id         INTEGER REFERENCES removal_requests(id),
+  site_id            INTEGER NOT NULL REFERENCES sites(id),
+  from_assignment_id INTEGER NOT NULL REFERENCES assignments(id),
+  to_assignment_id   INTEGER NOT NULL REFERENCES assignments(id),
+  from_employee_id   INTEGER NOT NULL REFERENCES users(id),
+  to_employee_id     INTEGER NOT NULL REFERENCES users(id),
+  moved_by           INTEGER NOT NULL REFERENCES users(id),
+  moved_at           TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX idx_re_from ON reassignments(from_assignment_id);
 
 INSERT INTO tasks (key, name) VALUES
   ('office_self_vehicle', 'FORM OF OFFICE SELF VEHICLE');

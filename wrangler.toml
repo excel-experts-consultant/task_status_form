@@ -3,7 +3,7 @@ pages_build_output_dir = "public"
 compatibility_date = "2026-01-01"
 
 [vars]
-SHEET_ID = "1zQgHvH5-PEaZBOCk8EoO1H6WWEEvLO28u4JLPPAfYkc"
+SHEET_ID = "1tdEsm554X14oQx8baodhtM94D3kzEIZcRVD5DSqR7JA"
 SHEET_TAB = "TNK FD"
 DIESEL_RANGE = "'TNK FD'!H2"
 TIMEZONE = "Asia/Kolkata"
@@ -13,7 +13,7 @@ NIGHT_END = "6"
 [[d1_databases]]
 binding = "DB"
 database_name = "fieldops"
-database_id = "4fb13f58-2710-4c0e-8592-150ad530b1d1"
+database_id = "aac8deaa-7737-4a30-b063-c84c62895fb0"
 
 # The only secret you still add in the dashboard (Production) is GOOGLE_SERVICE_ACCOUNT.
 # SESSION_SECRET is optional now; if it is missing the app generates one and keeps it in D1.

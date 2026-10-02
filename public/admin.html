@@ -73,6 +73,36 @@
   @media (max-width: 900px) { .split-2 { grid-template-columns: 1fr; } }
   .mono-cell { font-variant-numeric: tabular-nums; }
   .empty-row td { color: var(--dim-light); text-align: center; padding: 30px; }
+
+  /* ---- removal requests ---- */
+  .req { margin-bottom: 18px; border-left: 3px solid var(--amber); }
+  .req .who-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .req .who-line b { font-family: var(--display); font-size: 15px; }
+  .req .reason {
+    font-size: 13px; color: var(--ink-700); background: var(--mist-50);
+    border-left: 2px solid var(--mist-200); padding: 8px 12px;
+    border-radius: 0 var(--r-sm) var(--r-sm) 0; margin: 10px 0 0;
+  }
+  .req .site-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 2px 10px; max-height: 260px; overflow: auto;
+    border: 1px solid var(--mist-200); border-radius: var(--r-sm); padding: 8px;
+  }
+  .req .site-grid label {
+    display: flex; align-items: center; gap: 8px; padding: 5px 6px;
+    border-radius: var(--r-sm); font-size: 13px; cursor: pointer;
+  }
+  .req .site-grid label:hover { background: var(--mist-50); }
+  .req .site-grid input { flex: none; }
+  .req .move-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--mist-100);
+  }
+  .req .move-bar select { width: auto; min-width: 190px; }
+  .req .move-bar .ticked { font-size: 12.5px; color: var(--dim-light); font-variant-numeric: tabular-nums; }
+  .req .move-bar .spring { margin-left: auto; }
+  .req .log { font-size: 12.5px; margin-top: 10px; }
+  .req .log .line { color: var(--ok); padding: 2px 0; }
 </style>
 </head>
 <body class="console">
@@ -90,6 +120,9 @@
       <button data-tab="jobs">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5.5 2v3M10.5 2v3M5.5 9l1.5 1.5L10.5 7" stroke-linecap="round"/></svg>
         Allocated jobs<span class="tally" id="tally-jobs"></span></button>
+      <button data-tab="requests">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2.5 14 13H2L8 2.5Z" stroke-linejoin="round"/><path d="M8 6.5v3M8 11.2v.1" stroke-linecap="round"/></svg>
+        Requests<span class="tally" id="tally-req"></span></button>
       <button data-tab="readings">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 12.5 6 8l3 3 4.5-6.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Readings<span class="tally" id="tally-read"></span></button>
@@ -112,6 +145,7 @@
       <div class="stat"><div class="k">Employees</div><div class="v" id="s-emp">—</div></div>
       <div class="stat"><div class="k">Pending jobs</div><div class="v" id="s-pending">—</div></div>
       <div class="stat"><div class="k">Readings today</div><div class="v" id="s-today">—</div></div>
+      <div class="stat" id="s-requests-wrap"><div class="k">Requests</div><div class="v" id="s-requests">—</div></div>
       <div class="stat" id="s-unsynced-wrap"><div class="k">Not in sheet</div><div class="v" id="s-unsynced">—</div></div>
       <div class="stat spacer"></div>
     </div>
@@ -191,6 +225,18 @@
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- ============================================ requests -->
+      <section id="requests">
+        <div class="page-head">
+          <h1>Removal requests</h1>
+          <p>An employee who has finished part of a job can ask for the sites they have not started to be
+             moved elsewhere. Tick the sites, choose who takes them, and send — repeat with a different
+             employee to split the remainder across several people. Whatever you leave unticked stays
+             where it is.</p>
+        </div>
+        <div id="req-list"></div>
       </section>
 
       <!-- ============================================ readings -->
@@ -318,7 +364,7 @@ $('nav').addEventListener('click', (e) => {
   document.querySelectorAll('#nav button').forEach(b => b.setAttribute('aria-selected', b === btn));
   document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === btn.dataset.tab));
   $('sendbar').classList.toggle('hidden', btn.dataset.tab !== 'allocate');
-  ({ jobs: loadJobs, readings: loadReadings, sites: renderSites, staff: loadStaff })[btn.dataset.tab]?.();
+  ({ jobs: loadJobs, requests: loadRequests, readings: loadReadings, sites: renderSites, staff: loadStaff })[btn.dataset.tab]?.();
 });
 
 function note(el, text, kind) {
@@ -399,6 +445,9 @@ async function loadStats() {
     $('s-unsynced-wrap').classList.toggle('alert', stats.unsynced > 0);
     $('tally-jobs').textContent = stats.pending || '';
     $('tally-read').textContent = stats.unsynced || '';
+    $('tally-req').textContent = stats.requests || '';
+    $('s-requests').textContent = stats.requests ?? 0;
+    $('s-requests-wrap').classList.toggle('alert', stats.requests > 0);
   } catch {}
 }
 boot().catch(e => note($('alloc-note'), e.message, 'bad'));
@@ -442,13 +491,16 @@ async function loadJobs() {
   const { assignments } = await api('/admin/assignments');
   $('jobs-body').innerHTML = assignments.length ? assignments.map(a => `
     <tr>
-      <td>${esc(a.task_name)}</td>
+      <td>${esc(a.task_name)}
+        ${a.open_request ? '<div class="t-12" style="color:var(--amber-ink,#9a6400)">removal requested</div>' : ''}
+        ${a.source_employee ? `<div class="t-12 quiet">taken over from ${esc(a.source_employee)}</div>` : ''}</td>
       <td>${esc(a.employee_name)}</td>
       <td>
         <div class="row">
           <span class="mono-cell t-12" style="min-width:46px">${a.done}/${a.total}</span>
           <span class="grow">${meter(a.done, a.total)}</span>
         </div>
+        ${a.moved_away ? `<div class="t-12 quiet">${a.moved_away} site${a.moved_away > 1 ? 's' : ''} moved to others</div>` : ''}
       </td>
       <td class="mono-cell">${esc(a.due_date || '—')}</td>
       <td class="mono-cell t-12 quiet">${esc(a.created_at)}</td>
@@ -462,6 +514,132 @@ $('jobs-body').addEventListener('click', async (e) => {
   if (!btn || !confirm('Cancel this allocation? It disappears from the employee dashboard.')) return;
   await api('/admin/assignments/' + btn.dataset.cancel, { method: 'DELETE' });
   loadJobs(); loadStats();
+});
+
+/* ---------------- removal requests ---------------- */
+async function loadRequests() {
+  const wrap = $('req-list');
+  let requests;
+  try { ({ requests } = await api('/admin/removal-requests')); }
+  catch (e) { wrap.innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; return; }
+
+  if (!requests.length) {
+    wrap.innerHTML = `<div class="panel"><div class="panel-body">
+        <p class="quiet t-13" style="margin:0">
+          No open requests. One appears here when an employee who has finished part of a job
+          asks for the sites they could not reach to be given to someone else.</p>
+      </div></div>`;
+    return;
+  }
+
+  wrap.innerHTML = requests.map(r => {
+    const others = EMPLOYEES.filter(e => e.id !== r.employee_id);
+    return `<div class="panel req" data-req="${r.id}">
+      <div class="panel-head">
+        <div class="who-line">
+          <b>${esc(r.employee_name)}</b>
+          <span class="t-13 quiet">${esc(r.task_name)}</span>
+          <span class="badge ok"><span class="dot"></span>${r.done} of ${r.total} done</span>
+          <span class="badge warn"><span class="dot"></span>${r.pending_sites.length} not started</span>
+          <span class="t-12 quiet mono-cell" style="margin-left:auto">asked ${esc(r.created_at)}</span>
+        </div>
+        ${r.reason ? `<div class="reason">${esc(r.reason)}</div>` : ''}
+      </div>
+      <div class="panel-body">
+        <label style="margin-bottom:6px">Sites still untouched — tick the ones to hand over</label>
+        <div class="site-grid">
+          ${r.pending_sites.map(s => `
+            <label><input type="checkbox" data-site value="${s.site_id}">
+              <span class="truncate">${esc(s.site_name)}</span></label>`).join('')}
+        </div>
+
+        <div class="move-bar">
+          <button class="quiet-btn" data-pick-all>Tick all</button>
+          <button class="quiet-btn" data-pick-none>Clear</button>
+          <span class="ticked" data-count>0 ticked</span>
+          <span class="spring"></span>
+          <select data-target>
+            <option value="">Hand over to…</option>
+            ${others.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}
+          </select>
+          <button data-move>Move ticked sites</button>
+        </div>
+
+        <div class="log" data-log></div>
+
+        <div class="move-bar">
+          <span class="t-12 quiet">Finished with this request?</span>
+          <button class="ghost small" data-close>Close — leave the rest with ${esc(r.employee_name.split(/\s+/)[0])}</button>
+          <button class="danger small" data-decline>Decline</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+$('req-list').addEventListener('change', (e) => {
+  if (e.target.matches('[data-site]')) refreshTicked(e.target.closest('.req'));
+});
+
+function refreshTicked(card) {
+  const n = card.querySelectorAll('[data-site]:checked').length;
+  card.querySelector('[data-count]').textContent = `${n} ticked`;
+}
+
+$('req-list').addEventListener('click', async (e) => {
+  const card = e.target.closest('.req');
+  if (!card) return;
+  const id = card.dataset.req;
+  const boxes = [...card.querySelectorAll('[data-site]')];
+
+  if (e.target.closest('[data-pick-all]')) {
+    boxes.forEach(b => { b.checked = true; }); refreshTicked(card); return;
+  }
+  if (e.target.closest('[data-pick-none]')) {
+    boxes.forEach(b => { b.checked = false; }); refreshTicked(card); return;
+  }
+
+  if (e.target.closest('[data-move]')) {
+    const btn = e.target.closest('[data-move]');
+    const sel = card.querySelector('[data-target]');
+    const log = card.querySelector('[data-log]');
+    const siteIds = boxes.filter(b => b.checked).map(b => Number(b.value));
+    if (!sel.value) return note(log, 'Choose who takes these sites.', 'bad');
+    if (!siteIds.length) return note(log, 'Tick at least one site.', 'bad');
+
+    btn.disabled = true; btn.textContent = 'Moving…';
+    try {
+      const d = await api(`/admin/removal-requests/${id}/reassign`, { body: { employee_id: Number(sel.value), site_ids: siteIds } });
+      log.className = 'log';
+      log.insertAdjacentHTML('beforeend',
+        `<div class="line">${d.moved} site${d.moved > 1 ? 's' : ''} moved to ${esc(d.to)}.</div>`);
+      // drop the moved rows out of the list
+      boxes.filter(b => b.checked).forEach(b => b.closest('label').remove());
+      sel.value = '';
+      refreshTicked(card);
+      if (d.request_closed) {
+        log.insertAdjacentHTML('beforeend',
+          '<div class="line">Nothing left pending — the original job closed itself as complete.</div>');
+        setTimeout(() => { loadRequests(); loadStats(); }, 1400);
+      }
+      loadStats();
+    } catch (err) { note(log, err.message, 'bad'); }
+    btn.disabled = false; btn.textContent = 'Move ticked sites';
+    return;
+  }
+
+  if (e.target.closest('[data-close]')) {
+    if (!confirm('Close this request? Any site you did not move stays with the original employee.')) return;
+    await api(`/admin/removal-requests/${id}/close`, { body: {} });
+    loadRequests(); loadStats(); return;
+  }
+
+  if (e.target.closest('[data-decline]')) {
+    const why = prompt('Tell the employee why this is declined (optional)');
+    if (why === null) return;
+    await api(`/admin/removal-requests/${id}/decline`, { body: { note: why } });
+    loadRequests(); loadStats();
+  }
 });
 
 /* ---------------- readings ---------------- */

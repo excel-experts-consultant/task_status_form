@@ -8,53 +8,53 @@ on:
 jobs:
   apk:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22'
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: '21'
 
+      # Accept Android SDK licenses without interactive prompt
       - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
+        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      # Same signing key every build, so a new APK installs over the old one.
-      - name: Use the project's fixed debug key
-        run: mkdir -p ~/.android && cp ci/debug.keystore ~/.android/debug.keystore
+      - name: Install Node dependencies
+        run: npm install
 
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Create Android project
+      # Add the android platform (generates android/ folder on the runner)
+      - name: Add Android platform
         run: npx cap add android
 
-      - name: Copy web app into Android project
+      # Sync web assets into the android/ folder
+      - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Add notification permissions
+      # Use a consistent debug keystore so APKs install over older versions
+      - name: Set up debug keystore
         run: |
-          M=android/app/src/main/AndroidManifest.xml
-          grep -q POST_NOTIFICATIONS "$M" || sed -i \
-            's|<application|<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n\n    <application|' \
-            "$M"
+          mkdir -p android/app
+          if [ ! -f android/app/debug.keystore ]; then
+            keytool -genkey -v \
+              -keystore android/app/debug.keystore \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
-      - name: Build APK
+      - name: Build debug APK
         working-directory: android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: Rename APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk FieldOps.apk
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
           name: FieldOps-APK
-          path: FieldOps.apk
-          if-no-files-found: error
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30

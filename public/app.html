@@ -92,6 +92,22 @@
   .chip.done { color: var(--ok); border-color: rgba(46,158,104,.4); background: rgba(46,158,104,.09); }
   .chip.more { border-style: dashed; color: var(--dim); }
 
+  .job .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .job .actions .ask {
+    background: none; border: 1px solid var(--ink-600); color: #a9c0c3;
+    font-size: 12.5px; padding: 9px 12px;
+  }
+  .job .actions .ask:hover { background: var(--ink-750); color: #d7e5e7; }
+  .job .waiting {
+    display: flex; align-items: flex-start; gap: 9px;
+    border: 1px dashed var(--ink-500); border-radius: var(--r);
+    padding: 10px 12px; font-size: 12.5px; color: #b8cccf;
+  }
+  .job .waiting svg { flex: none; margin-top: 1px; color: var(--amber); }
+  .job .waiting button { background: none; border: 0; color: var(--dim); padding: 0; font-size: 12px; text-decoration: underline; }
+  .job .waiting button:hover { background: none; color: #d7e5e7; }
+  .job .moved { font-size: 12px; color: var(--dim); margin-top: 10px; }
+
   /* --- form --- */
   .back { background: none; border: 0; color: var(--amber); padding: 6px 0 14px; font-size: 13.5px; display: flex; align-items: center; gap: 6px; }
   .back:hover { background: none; }
@@ -305,6 +321,32 @@ const meterBar = (done, total) => {
   return `<span class="meter grow">${Array.from({ length: seg }, (_, i) => `<i class="${i < on ? 'on' : ''}"></i>`).join('')}</span>`;
 };
 
+/**
+ * The buttons under a job card.
+ * Asking for sites to be moved is only offered once at least one site is in
+ * and at least one is still outstanding — a job you have not started is yours
+ * to finish, and a finished job has nothing to move.
+ */
+function jobActions(a, done, pending) {
+  if (!pending) return '<span class="badge ok"><span class="dot"></span>complete</span>';
+
+  if (a.removal_request) {
+    return `<div class="waiting">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M8 4.8V8l2.2 1.4" stroke-linecap="round"/></svg>
+      <span class="grow">Your admin has been asked to move the ${pending} site${pending > 1 ? 's' : ''} you have not started.
+        You can still fill any of them in until they do.
+        <br><button data-withdraw="${a.assignment_id}">Withdraw the request</button></span>
+    </div>
+    <div style="height:10px"></div>
+    <button data-open="${a.assignment_id}">Fill in ${pending} site${pending > 1 ? 's' : ''}</button>`;
+  }
+
+  return `<div class="actions">
+    <button data-open="${a.assignment_id}">Fill in ${pending} site${pending > 1 ? 's' : ''}</button>
+    ${done ? `<button class="ask" data-ask="${a.assignment_id}">Can't reach the rest</button>` : ''}
+  </div>`;
+}
+
 async function loadDash() {
   const msg = $('jobs-msg');
   try {
@@ -331,8 +373,8 @@ async function loadDash() {
           </div>
           ${a.notes ? `<div class="note">${esc(a.notes)}</div>` : ''}
           <div class="chips">${chips}</div>
-          ${pending ? `<button data-open="${a.assignment_id}">Fill in ${pending} site${pending > 1 ? 's' : ''}</button>`
-                    : '<span class="badge ok"><span class="dot"></span>complete</span>'}
+          ${jobActions(a, done, pending)}
+          ${a.moved_away ? `<div class="moved">${a.moved_away} site${a.moved_away > 1 ? 's were' : ' was'} handed to another employee by your admin.</div>` : ''}
         </div>
       </article>`;
     }).join('')
@@ -407,10 +449,39 @@ async function refreshDiesel(siteId) {
 $('diesel-refresh').onclick = () => refreshDiesel(current?.siteId);
 
 /* ---------------- form ---------------- */
-$('jobs').addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-open]');
-  if (!btn) return;
-  openForm(DASH.assignments.find(x => x.assignment_id === Number(btn.dataset.open)));
+$('jobs').addEventListener('click', async (e) => {
+  const open = e.target.closest('[data-open]');
+  if (open) {
+    openForm(DASH.assignments.find(x => x.assignment_id === Number(open.dataset.open)));
+    return;
+  }
+
+  const ask = e.target.closest('[data-ask]');
+  if (ask) {
+    const a = DASH.assignments.find(x => x.assignment_id === Number(ask.dataset.ask));
+    const left = a.sites.filter(s => s.status === 'pending').length;
+    const reason = prompt(
+      `Ask your admin to give the ${left} site${left > 1 ? 's' : ''} you have not started to someone else?\n\n`
+      + 'Say briefly why (vehicle, distance, time) — it helps them decide.');
+    if (reason === null) return;
+    ask.disabled = true; ask.textContent = 'Sending…';
+    try {
+      await api('/emp/request-removal', { body: { assignment_id: a.assignment_id, reason } });
+      note($('jobs-msg'), 'Sent. Your admin will move those sites or come back to you.', 'good');
+      loadDash();
+    } catch (err) {
+      note($('jobs-msg'), err.message, 'bad');
+      ask.disabled = false; ask.textContent = "Can't reach the rest";
+    }
+    return;
+  }
+
+  const withdraw = e.target.closest('[data-withdraw]');
+  if (withdraw) {
+    if (!confirm('Withdraw the request and keep all these sites?')) return;
+    await api('/emp/cancel-removal', { body: { assignment_id: Number(withdraw.dataset.withdraw) } });
+    loadDash();
+  }
 });
 
 function openForm(a) {
@@ -499,6 +570,9 @@ $('a-save').addEventListener('click', async () => {
     pending: DASH?.pending || 0,
     muteUntil: DASH?.mute_until || null,
   });
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
 })();
 
 window.addEventListener('online', loadDash);

@@ -4,7 +4,7 @@
  *
  * Bindings expected (see wrangler.toml / Pages dashboard):
  *   DB                      D1 database
- *   SESSION_SECRET          optional secret; if absent one is generated and kept in D1
+ *   SESSION_SECRET          secret, any long random string
  *   GOOGLE_SERVICE_ACCOUNT  secret, the full service-account JSON as one line
  *   SHEET_ID                var, the spreadsheet id
  *   SHEET_TAB               var, default "TNK FD"
@@ -53,31 +53,15 @@ async function hmac(secret, msg) {
   return b64url(await crypto.subtle.sign('HMAC', key, enc.encode(msg)));
 }
 
-let secretCache = null;
-
-/** Dashboard secret if set; otherwise a random one generated once and kept in D1. */
-async function sessionSecret(env) {
-  if (env.SESSION_SECRET && String(env.SESSION_SECRET).length >= 16) return env.SESSION_SECRET;
-  if (secretCache) return secretCache;
-  let row = await env.DB.prepare("SELECT value FROM config WHERE key = 'session_secret'").first();
-  if (!row) {
-    const fresh = hex(crypto.getRandomValues(new Uint8Array(32)));
-    await env.DB.prepare("INSERT OR IGNORE INTO config (key, value) VALUES ('session_secret', ?)").bind(fresh).run();
-    row = await env.DB.prepare("SELECT value FROM config WHERE key = 'session_secret'").first();
-  }
-  secretCache = row.value;
-  return secretCache;
-}
-
 async function signToken(env, payload) {
   const body = b64url(enc.encode(JSON.stringify(payload)));
-  return `${body}.${await hmac(await sessionSecret(env), body)}`;
+  return `${body}.${await hmac(env.SESSION_SECRET, body)}`;
 }
 
 async function readToken(env, token) {
   if (!token || !token.includes('.')) return null;
   const [body, sig] = token.split('.');
-  if ((await hmac(await sessionSecret(env), body)) !== sig) return null;
+  if ((await hmac(env.SESSION_SECRET, body)) !== sig) return null;
   try {
     const payload = JSON.parse(atob(body.replace(/-/g, '+').replace(/_/g, '/')));
     if (payload.exp && payload.exp < Date.now()) return null;
@@ -155,18 +139,21 @@ async function readRange(env, range) {
 /**
  * Append one row to the TNK FD sheet.
  *   Column A  index 0  Date time
+ *   Column B  index 1  Site name
+ *   Column C  index 2  Employee who took the reading
+ *   Column E  index 4  Tanker reading  ("Actual Reading")
  *   Column F  index 5  DG hours reading
- *   Column I  index 8  Tanker reading
- * Column B is filled with the site name so rows are traceable; blank the rest.
+ * Column H (Dsl Left) is a sheet formula and is never written here.
  */
-async function appendReading(env, tab, { dateTime, siteName, dgHours, tankerReading }) {
+async function appendReading(env, tab, { dateTime, siteName, employeeName, dgHours, tankerReading }) {
   const token = await googleToken(env);
-  const row = ['', '', '', '', '', '', '', '', ''];
+  const row = ['', '', '', '', '', ''];
   row[0] = dateTime;
   row[1] = siteName;
+  row[2] = employeeName || '';
+  row[4] = tankerReading;
   row[5] = dgHours;
-  row[8] = tankerReading;
-  const range = `${tab}!A:I`;
+  const range = `${tab}!A:F`;
   const res = await fetch(
     sheetsUrl(env, `/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`),
     {
@@ -244,33 +231,6 @@ export async function onRequest(context) {
 }
 
 async function route({ path, method, body, url, request, env }) {
-  /* ---------- health: open /api/health in a browser to see what is configured ---------- */
-  if (path === '/health') {
-    const out = {
-      ok: true,
-      version: '2.0',
-      database: 'missing — add the DB binding in Pages settings',
-      users: null,
-      session_secret: env.SESSION_SECRET ? 'dashboard' : 'auto (stored in D1)',
-      sheet_id: env.SHEET_ID ? 'set' : 'missing',
-      google_service_account: env.GOOGLE_SERVICE_ACCOUNT ? 'set' : 'not set yet — sheet sync is off',
-    };
-    if (env.DB) {
-      try {
-        const r = await env.DB.prepare("SELECT role, COUNT(*) AS n FROM users GROUP BY role").all();
-        out.database = 'connected';
-        out.users = Object.fromEntries(r.results.map((x) => [x.role, x.n]));
-      } catch (e) { out.database = 'error: ' + e.message; }
-    }
-    if (env.GOOGLE_SERVICE_ACCOUNT && env.SHEET_ID && env.DIESEL_RANGE) {
-      try { out.diesel_left_test = await readRange(env, env.DIESEL_RANGE); }
-      catch (e) { out.diesel_left_test = 'error: ' + e.message; }
-    }
-    return json(out);
-  }
-
-  if (!env.DB) return fail('Database is not connected. Add the DB binding in Cloudflare Pages settings.', 500);
-
   /* ---------- auth ---------- */
 
   if (path === '/auth/login' && method === 'POST') {
@@ -327,7 +287,8 @@ async function route({ path, method, body, url, request, env }) {
           (SELECT COUNT(*) FROM assignment_sites s JOIN assignments a ON a.id = s.assignment_id
              WHERE s.status = 'pending' AND a.status = 'open') AS pending,
           (SELECT COUNT(*) FROM submissions WHERE date(submitted_at) = date('now')) AS today,
-          (SELECT COUNT(*) FROM submissions WHERE sheet_status != 'synced') AS unsynced
+          (SELECT COUNT(*) FROM submissions WHERE sheet_status != 'synced') AS unsynced,
+          (SELECT COUNT(*) FROM removal_requests WHERE status = 'open') AS requests
       `).first();
       return json({ ok: true, stats });
     }
@@ -361,10 +322,15 @@ async function route({ path, method, body, url, request, env }) {
 
     if (path === '/admin/assignments' && method === 'GET') {
       const { results } = await env.DB.prepare(`
-        SELECT a.id, a.due_date, a.notes, a.status, a.created_at,
+        SELECT a.id, a.due_date, a.notes, a.status, a.created_at, a.source_assignment_id,
                t.name AS task_name, u.name AS employee_name, ab.name AS assigned_by,
                COUNT(s.id) AS total,
-               SUM(CASE WHEN s.status = 'done' THEN 1 ELSE 0 END) AS done
+               SUM(CASE WHEN s.status = 'done' THEN 1 ELSE 0 END) AS done,
+               (SELECT COUNT(*) FROM reassignments re WHERE re.from_assignment_id = a.id) AS moved_away,
+               (SELECT COUNT(*) FROM removal_requests rr
+                  WHERE rr.assignment_id = a.id AND rr.status = 'open') AS open_request,
+               (SELECT su.name FROM assignments sa JOIN users su ON su.id = sa.employee_id
+                  WHERE sa.id = a.source_assignment_id) AS source_employee
         FROM assignments a
         JOIN tasks t ON t.id = a.task_id
         JOIN users u ON u.id = a.employee_id
@@ -379,6 +345,155 @@ async function route({ path, method, body, url, request, env }) {
     if (path.startsWith('/admin/assignments/') && method === 'DELETE') {
       const id = Number(path.split('/').pop());
       await env.DB.prepare("UPDATE assignments SET status = 'cancelled' WHERE id = ?").bind(id).run();
+      await env.DB.prepare("UPDATE removal_requests SET status = 'withdrawn' WHERE assignment_id = ? AND status = 'open'")
+        .bind(id).run();
+      return json({ ok: true });
+    }
+
+    /* ---------- removal requests ---------- */
+
+    // Everything the admin needs to action a request, including the exact
+    // sites still untouched on the requesting employee's job.
+    if (path === '/admin/removal-requests' && method === 'GET') {
+      const { results: reqs } = await env.DB.prepare(`
+        SELECT r.id, r.assignment_id, r.reason, r.created_at,
+               a.employee_id, a.due_date, a.notes,
+               u.name AS employee_name, t.name AS task_name,
+               COUNT(s.id) AS total,
+               SUM(CASE WHEN s.status = 'done' THEN 1 ELSE 0 END) AS done
+        FROM removal_requests r
+        JOIN assignments a ON a.id = r.assignment_id
+        JOIN users u ON u.id = a.employee_id
+        JOIN tasks t ON t.id = a.task_id
+        LEFT JOIN assignment_sites s ON s.assignment_id = a.id
+        WHERE r.status = 'open'
+        GROUP BY r.id
+        ORDER BY r.created_at
+      `).all();
+
+      if (reqs.length) {
+        const ids = reqs.map((r) => r.assignment_id);
+        const ph = ids.map(() => '?').join(',');
+        const { results: sites } = await env.DB.prepare(`
+          SELECT s.assignment_id, si.id AS site_id, si.name AS site_name, si.code
+          FROM assignment_sites s JOIN sites si ON si.id = s.site_id
+          WHERE s.assignment_id IN (${ph}) AND s.status = 'pending'
+          ORDER BY si.name
+        `).bind(...ids).all();
+        for (const r of reqs) {
+          r.done = Number(r.done || 0);
+          r.pending_sites = sites.filter((s) => s.assignment_id === r.assignment_id);
+        }
+      }
+      return json({ ok: true, requests: reqs });
+    }
+
+    // Move a ticked subset of the still-pending sites to one other employee.
+    // Call it again with a different subset and employee to split the job further.
+    if (/^\/admin\/removal-requests\/\d+\/reassign$/.test(path) && method === 'POST') {
+      const reqId = Number(path.split('/')[3]);
+      const targetId = Number(body.employee_id);
+      const siteIds = [...new Set((body.site_ids || []).map(Number).filter(Boolean))];
+      if (!targetId) return fail('Choose who takes these sites');
+      if (!siteIds.length) return fail('Tick at least one site to move');
+
+      const req = await env.DB.prepare(`
+        SELECT r.id, r.status, r.assignment_id,
+               a.task_id, a.due_date, a.notes, a.status AS job_status,
+               a.employee_id AS from_employee_id
+        FROM removal_requests r JOIN assignments a ON a.id = r.assignment_id
+        WHERE r.id = ?
+      `).bind(reqId).first();
+      if (!req) return fail('That request no longer exists', 404);
+      if (req.status !== 'open') return fail('That request has already been handled');
+      if (req.job_status !== 'open') return fail('That job is already closed');
+      if (targetId === req.from_employee_id) return fail('Choose a different employee');
+
+      const target = await env.DB.prepare(
+        "SELECT id, name FROM users WHERE id = ? AND role = 'employee' AND active = 1",
+      ).bind(targetId).first();
+      if (!target) return fail('That employee is not available');
+
+      // The rule: nothing moves off a job the employee has not started.
+      const counts = await env.DB.prepare(`
+        SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done
+        FROM assignment_sites WHERE assignment_id = ?
+      `).bind(req.assignment_id).first();
+      if (!Number(counts.done)) {
+        return fail('No site on this job has been completed yet, so nothing can be moved', 403);
+      }
+
+      // Only sites that are genuinely still pending on this job may move.
+      const ph = siteIds.map(() => '?').join(',');
+      const { results: movable } = await env.DB.prepare(`
+        SELECT site_id FROM assignment_sites
+        WHERE assignment_id = ? AND status = 'pending' AND site_id IN (${ph})
+      `).bind(req.assignment_id, ...siteIds).all();
+      if (!movable.length) return fail('Those sites are already done or no longer on this job');
+      const moveIds = movable.map((r) => r.site_id);
+
+      // One follow-on job per receiving employee, reused across repeated moves.
+      let dest = await env.DB.prepare(`
+        SELECT id FROM assignments
+        WHERE source_assignment_id = ? AND employee_id = ? AND status = 'open'
+      `).bind(req.assignment_id, targetId).first();
+      if (!dest) {
+        dest = await env.DB.prepare(`
+          INSERT INTO assignments (task_id, employee_id, assigned_by, due_date, notes, source_assignment_id)
+          VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+        `).bind(req.task_id, targetId, admin.id, req.due_date || null, req.notes || null, req.assignment_id).first();
+      }
+
+      const mp = moveIds.map(() => '?').join(',');
+      await env.DB.prepare(`
+        UPDATE assignment_sites SET assignment_id = ?
+        WHERE assignment_id = ? AND status = 'pending' AND site_id IN (${mp})
+      `).bind(dest.id, req.assignment_id, ...moveIds).run();
+
+      await env.DB.batch(moveIds.map((siteId) => env.DB.prepare(`
+        INSERT INTO reassignments
+          (request_id, site_id, from_assignment_id, to_assignment_id, from_employee_id, to_employee_id, moved_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(reqId, siteId, req.assignment_id, dest.id, req.from_employee_id, targetId, admin.id)));
+
+      // Nothing left pending on the original job means it is finished — not
+      // because anyone marked it so, but because every site is accounted for.
+      const left = await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM assignment_sites WHERE assignment_id = ? AND status = 'pending'",
+      ).bind(req.assignment_id).first();
+      let closed = false;
+      if (left.n === 0) {
+        await env.DB.prepare("UPDATE assignments SET status = 'done' WHERE id = ?").bind(req.assignment_id).run();
+        await env.DB.prepare(
+          "UPDATE removal_requests SET status = 'resolved', resolved_by = ?, resolved_at = ? WHERE id = ?",
+        ).bind(admin.id, nowIso(), reqId).run();
+        closed = true;
+      }
+      return json({ ok: true, moved: moveIds.length, to: target.name, remaining: left.n, request_closed: closed });
+    }
+
+    if (/^\/admin\/removal-requests\/\d+\/decline$/.test(path) && method === 'POST') {
+      const reqId = Number(path.split('/')[3]);
+      const r = await env.DB.prepare("SELECT status FROM removal_requests WHERE id = ?").bind(reqId).first();
+      if (!r) return fail('That request no longer exists', 404);
+      if (r.status !== 'open') return fail('That request has already been handled');
+      await env.DB.prepare(`
+        UPDATE removal_requests
+        SET status = 'declined', admin_note = ?, resolved_by = ?, resolved_at = ?
+        WHERE id = ?
+      `).bind(String(body.note || '').trim().slice(0, 400) || null, admin.id, nowIso(), reqId).run();
+      return json({ ok: true });
+    }
+
+    // Close a request while leaving whatever is still pending with the original
+    // employee — used when the admin moved only part of the list.
+    if (/^\/admin\/removal-requests\/\d+\/close$/.test(path) && method === 'POST') {
+      const reqId = Number(path.split('/')[3]);
+      await env.DB.prepare(`
+        UPDATE removal_requests
+        SET status = 'resolved', admin_note = ?, resolved_by = ?, resolved_at = ?
+        WHERE id = ? AND status = 'open'
+      `).bind(String(body.note || '').trim().slice(0, 400) || null, admin.id, nowIso(), reqId).run();
       return json({ ok: true });
     }
 
@@ -398,8 +513,10 @@ async function route({ path, method, body, url, request, env }) {
     // Retry any rows that failed to reach the spreadsheet.
     if (path === '/admin/resync' && method === 'POST') {
       const { results } = await env.DB.prepare(`
-        SELECT sub.*, si.name AS site_name, si.sheet_tab
-        FROM submissions sub JOIN sites si ON si.id = sub.site_id
+        SELECT sub.*, si.name AS site_name, si.sheet_tab, u.name AS employee_name
+        FROM submissions sub
+        JOIN sites si ON si.id = sub.site_id
+        JOIN users u ON u.id = sub.employee_id
         WHERE sub.sheet_status != 'synced' LIMIT 50
       `).all();
       let synced = 0;
@@ -407,7 +524,8 @@ async function route({ path, method, body, url, request, env }) {
         try {
           const range = await appendReading(env, row.sheet_tab || env.SHEET_TAB || 'TNK FD', {
             dateTime: `${row.reading_date} ${row.submitted_at.slice(11, 19)}`,
-            siteName: row.site_name, dgHours: row.dg_hours, tankerReading: row.tanker_reading,
+            siteName: row.site_name, employeeName: row.employee_name,
+            dgHours: row.dg_hours, tankerReading: row.tanker_reading,
           });
           await env.DB.prepare("UPDATE submissions SET sheet_status='synced', sheet_row=?, sheet_error=NULL WHERE id=?")
             .bind(range, row.id).run();
@@ -508,6 +626,25 @@ async function route({ path, method, body, url, request, env }) {
         });
       }
       const assignments = [...byAssignment.values()];
+
+      // Open removal requests, so the app can show "waiting on your admin"
+      // instead of offering the button again.
+      const { results: openReqs } = await env.DB.prepare(`
+        SELECT id, assignment_id, reason, created_at FROM removal_requests
+        WHERE requested_by = ? AND status = 'open'
+      `).bind(emp.id).all();
+      // Sites already taken off this employee's jobs and given to someone else.
+      const { results: moved } = await env.DB.prepare(`
+        SELECT from_assignment_id AS assignment_id, COUNT(*) AS n
+        FROM reassignments WHERE from_employee_id = ? GROUP BY from_assignment_id
+      `).bind(emp.id).all();
+
+      for (const a of assignments) {
+        const r = openReqs.find((x) => x.assignment_id === a.assignment_id);
+        a.removal_request = r ? { id: r.id, reason: r.reason, created_at: r.created_at } : null;
+        a.moved_away = Number(moved.find((m) => m.assignment_id === a.assignment_id)?.n || 0);
+      }
+
       const pending = assignments.reduce((n, a) => n + a.sites.filter((s) => s.status === 'pending').length, 0);
       return json({
         ok: true,
@@ -577,6 +714,7 @@ async function route({ path, method, body, url, request, env }) {
         sheet.range = await appendReading(env, site.sheet_tab || env.SHEET_TAB || 'TNK FD', {
           dateTime: `${body.reading_date} ${stamp(env.TIMEZONE).slice(11)}`,
           siteName: site.name,
+          employeeName: emp.name,
           dgHours: String(body.dg_hours),
           tankerReading: String(body.tanker_reading),
         });
@@ -587,6 +725,48 @@ async function route({ path, method, body, url, request, env }) {
         .bind(sheet.status, sheet.range, sheet.error, row.id).run();
 
       return json({ ok: true, id: row.id, sheet: sheet.status, sheet_error: sheet.error });
+    }
+
+    /**
+     * Ask the admin to take the sites you have not started off this job.
+     * Only allowed on a job that is genuinely part done: at least one site
+     * submitted and at least one still pending.
+     */
+    if (path === '/emp/request-removal' && method === 'POST') {
+      const assignmentId = Number(body.assignment_id);
+      const a = await env.DB.prepare(
+        'SELECT id, status FROM assignments WHERE id = ? AND employee_id = ?',
+      ).bind(assignmentId, emp.id).first();
+      if (!a) return fail('That job is not yours');
+      if (a.status !== 'open') return fail('That job is already closed');
+
+      const c = await env.DB.prepare(`
+        SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) AS done
+        FROM assignment_sites WHERE assignment_id = ?
+      `).bind(assignmentId).first();
+      const done = Number(c.done || 0);
+      const stillOpen = Number(c.total || 0) - done;
+      if (!done) return fail('Submit at least one site before asking for the rest to be moved', 403);
+      if (!stillOpen) return fail('Every site on this job is already done');
+
+      const existing = await env.DB.prepare(
+        "SELECT id FROM removal_requests WHERE assignment_id = ? AND status = 'open'",
+      ).bind(assignmentId).first();
+      if (existing) return json({ ok: true, already: true, id: existing.id });
+
+      const row = await env.DB.prepare(
+        'INSERT INTO removal_requests (assignment_id, requested_by, reason) VALUES (?, ?, ?) RETURNING id',
+      ).bind(assignmentId, emp.id, String(body.reason || '').trim().slice(0, 400) || null).first();
+      return json({ ok: true, id: row.id, pending: stillOpen });
+    }
+
+    // Changed your mind before the admin acted.
+    if (path === '/emp/cancel-removal' && method === 'POST') {
+      await env.DB.prepare(`
+        UPDATE removal_requests SET status = 'withdrawn'
+        WHERE assignment_id = ? AND requested_by = ? AND status = 'open'
+      `).bind(Number(body.assignment_id), emp.id).run();
+      return json({ ok: true });
     }
 
     if (path === '/emp/history' && method === 'GET') {
