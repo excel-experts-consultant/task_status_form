@@ -2,7 +2,7 @@
    Inside the Android build the page is served from the APK itself, so calls
    must go to the deployed Pages URL — set it once here. */
 
-window.FIELDOPS_API = 'https://main-c6k.pages.dev'; // your live Pages URL
+window.FIELDOPS_API = 'https://main-c6k.pages.dev';
 
 const BASE = (window.Capacitor || location.protocol === 'file:') ? window.FIELDOPS_API : '';
 
@@ -33,9 +33,11 @@ async function api(path, options = {}) {
   return data;
 }
 
+/* `role` may be a single role or a list of acceptable roles. */
 function requireRole(role) {
   const user = store.user;
-  if (!store.token || !user || user.role !== role) { location.href = './index.html'; return null; }
+  const allowed = Array.isArray(role) ? role : [role];
+  if (!store.token || !user || !allowed.includes(user.role)) { location.href = './index.html'; return null; }
   return user;
 }
 
@@ -43,14 +45,3 @@ function signOut() { store.clear(); location.href = './index.html'; }
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-/* Remove the offline cache shipped in v1. It broke page loads on Cloudflare Pages,
-   so any browser that still has it gets it cleared on its next visit. */
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations()
-    .then((regs) => regs.forEach((r) => r.unregister()))
-    .catch(() => {});
-}
-if (window.caches) {
-  caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
-}

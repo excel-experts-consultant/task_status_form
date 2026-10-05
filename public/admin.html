@@ -103,6 +103,39 @@
   .req .move-bar .spring { margin-left: auto; }
   .req .log { font-size: 12.5px; margin-top: 10px; }
   .req .log .line { color: var(--ok); padding: 2px 0; }
+
+  /* ---- add-more-sites dialog ---- */
+  .modal {
+    position: fixed; inset: 0; z-index: 20; display: none;
+    background: rgba(11, 26, 30, .55); padding: 40px 20px; overflow: auto;
+  }
+  .modal.on { display: block; }
+  .modal .sheet {
+    background: #fff; border-radius: var(--r); max-width: 620px; margin: 0 auto;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, .28); overflow: hidden;
+  }
+  .modal .sheet-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--mist-100); }
+  .modal .sheet-head h3 { margin: 0; }
+  .modal .sheet-head p { margin: 4px 0 0; font-size: 13px; color: var(--dim-light); }
+  .modal .sheet-body { padding: 18px 20px; }
+  .modal .sheet-foot {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; border-top: 1px solid var(--mist-100); background: var(--mist-50);
+  }
+  .modal .sheet-foot .spring { margin-left: auto; }
+  .modal .add-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 2px 10px; max-height: 46vh; overflow: auto;
+    border: 1px solid var(--mist-200); border-radius: var(--r-sm); padding: 8px;
+  }
+  .modal .add-grid label {
+    display: flex; align-items: center; gap: 8px; padding: 5px 6px;
+    border-radius: var(--r-sm); font-size: 13px; cursor: pointer;
+  }
+  .modal .add-grid label:hover { background: var(--mist-50); }
+  .modal .add-grid label.has { opacity: .5; cursor: default; }
+  .modal .add-grid label.has:hover { background: none; }
+  .modal .add-grid .tag { margin-left: auto; font-size: 11px; color: var(--dim-light); }
 </style>
 </head>
 <body class="console">
@@ -125,7 +158,7 @@
         Requests<span class="tally" id="tally-req"></span></button>
       <button data-tab="readings">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 12.5 6 8l3 3 4.5-6.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        Readings<span class="tally" id="tally-read"></span></button>
+        Logs<span class="tally" id="tally-read"></span></button>
       <button data-tab="sites">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 14s4.5-4 4.5-7.5a4.5 4.5 0 1 0-9 0C3.5 10 8 14 8 14Z"/><circle cx="8" cy="6.5" r="1.6"/></svg>
         Sites</button>
@@ -242,7 +275,7 @@
       <!-- ============================================ readings -->
       <section id="readings">
         <div class="page-head">
-          <h1>Readings</h1>
+          <h1>Logs</h1>
           <p>Every submission with its status in the TNK FD sheet.</p>
         </div>
         <div class="panel">
@@ -315,7 +348,7 @@ Ajmer Road Site, JP02, Rajasthan, 'TNK FD'!K5"></textarea>
             <div class="panel-head"><h3>Add a login</h3></div>
             <div class="panel-body">
               <div class="field"><label for="e-name">Full name</label><input id="e-name"></div>
-              <div class="field"><label for="e-user">Username</label><input id="e-user" autocapitalize="none" spellcheck="false"></div>
+              <div class="field"><label for="e-user">Username</label><input id="e-user" autocapitalize="none" spellcheck="false" style="text-transform:lowercase"><div class="help">Always stored in lowercase.</div></div>
               <div class="field"><label for="e-pass">Password</label><input id="e-pass"><div class="help">At least 6 characters. You can change it later.</div></div>
               <div class="field"><label for="e-phone">Phone</label><input id="e-phone" placeholder="Optional"></div>
               <div class="notice hidden" id="staff-note"></div>
@@ -339,6 +372,28 @@ Ajmer Road Site, JP02, Rajasthan, 'TNK FD'!K5"></textarea>
   </div>
 </div>
 
+<!-- ============================================ add more sites -->
+<div class="modal" id="add-modal">
+  <div class="sheet">
+    <div class="sheet-head">
+      <h3>Add more sites</h3>
+      <p id="add-sub"></p>
+    </div>
+    <div class="sheet-body">
+      <input type="search" id="add-search" placeholder="Search by site name or code" style="margin-bottom:10px">
+      <div class="add-grid" id="add-grid"></div>
+      <div class="notice hidden" id="add-note" style="margin-top:14px"></div>
+    </div>
+    <div class="sheet-foot">
+      <button class="quiet-btn" id="add-none">Clear</button>
+      <span class="t-12 quiet" id="add-count">0 ticked</span>
+      <span class="spring"></span>
+      <button class="ghost" id="add-cancel">Close</button>
+      <button id="add-go" disabled>Add to this job</button>
+    </div>
+  </div>
+</div>
+
 <div class="sendbar" id="sendbar">
   <div>
     <div class="sum"><b id="job-count">0</b> jobs ready to send</div>
@@ -350,8 +405,10 @@ Ajmer Road Site, JP02, Rajasthan, 'TNK FD'!K5"></textarea>
 
 <script src="./js/api.js"></script>
 <script>
-const me = requireRole('admin');
-document.getElementById('who').textContent = me ? me.name : '';
+const me = requireRole(['admin', 'superadmin']);
+let IS_SUPER = me ? (!!me.is_super || me.role === 'superadmin') : false;
+document.getElementById('who').textContent = me
+  ? me.name + (IS_SUPER ? ' · superadmin' : '') : '';
 
 let SITES = [], EMPLOYEES = [];
 const picked = { site: new Set(), emp: new Set() };
@@ -427,6 +484,9 @@ function updateSendbar() {
 async function boot() {
   const d = await api('/admin/bootstrap');
   SITES = d.sites; EMPLOYEES = d.employees;
+  // The server is the authority on this, not the cached login.
+  IS_SUPER = !!d.admin?.is_super;
+  $('who').textContent = d.admin.name + (IS_SUPER ? ' · superadmin' : '');
   $('task').innerHTML = d.tasks.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
   renderPick('site', SITES); renderPick('emp', EMPLOYEES);
   $('site-count').textContent = SITES.length;
@@ -505,15 +565,93 @@ async function loadJobs() {
       <td class="mono-cell">${esc(a.due_date || '—')}</td>
       <td class="mono-cell t-12 quiet">${esc(a.created_at)}</td>
       <td class="t-13 quiet">${esc(a.assigned_by)}</td>
-      <td style="text-align:right"><button class="danger small" data-cancel="${a.id}">Cancel</button></td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="quiet-btn" data-add="${a.id}"
+                data-label="${esc(a.task_name)} · ${esc(a.employee_name)}">Add sites</button>
+        ${IS_SUPER ? `<button class="danger small" data-cancel="${a.id}">Cancel</button>` : ''}
+      </td>
     </tr>`).join('')
     : '<tr class="empty-row"><td colspan="7">No work allocated yet. Start on the Allocate work tab.</td></tr>';
 }
 $('jobs-body').addEventListener('click', async (e) => {
+  const add = e.target.closest('[data-add]');
+  if (add) { openAdd(Number(add.dataset.add), add.dataset.label); return; }
+
   const btn = e.target.closest('[data-cancel]');
   if (!btn || !confirm('Cancel this allocation? It disappears from the employee dashboard.')) return;
-  await api('/admin/assignments/' + btn.dataset.cancel, { method: 'DELETE' });
-  loadJobs(); loadStats();
+  try {
+    await api('/admin/assignments/' + btn.dataset.cancel, { method: 'DELETE' });
+    loadJobs(); loadStats();
+  } catch (err) { alert(err.message); }
+});
+
+/* ---------------- add more sites to an existing job ---------------- */
+let addJobId = null;
+const addPicked = new Set();
+let addExisting = new Map();   // site_id -> 'pending' | 'done'
+
+async function openAdd(id, label) {
+  addJobId = id;
+  addPicked.clear();
+  $('add-sub').textContent = label + ' — tick the extra sites to put on this same job.';
+  $('add-note').classList.add('hidden');
+  $('add-search').value = '';
+  $('add-grid').innerHTML = '<p class="quiet t-13" style="margin:6px">Loading…</p>';
+  $('add-modal').classList.add('on');
+  try {
+    const { sites } = await api(`/admin/assignments/${id}/sites`);
+    addExisting = new Map(sites.map(s => [s.site_id, s.status]));
+  } catch { addExisting = new Map(); }
+  renderAdd();
+}
+
+function renderAdd() {
+  const q = $('add-search').value.toLowerCase();
+  const shown = SITES.filter(s => !q
+    || s.name.toLowerCase().includes(q) || (s.code || '').toLowerCase().includes(q));
+
+  $('add-grid').innerHTML = shown.length ? shown.map(s => {
+    const has = addExisting.get(s.id);
+    return `<label class="${has ? 'has' : ''}">
+      <input type="checkbox" value="${s.id}" ${has ? 'disabled' : ''} ${addPicked.has(s.id) ? 'checked' : ''}>
+      <span class="truncate">${esc(s.name)}</span>
+      ${has ? `<span class="tag">${has === 'done' ? 'done' : 'on job'}</span>` : ''}
+    </label>`;
+  }).join('') : '<p class="quiet t-13" style="margin:6px">Nothing matches that search.</p>';
+
+  $('add-count').textContent = `${addPicked.size} ticked`;
+  $('add-go').disabled = !addPicked.size;
+}
+
+$('add-search').addEventListener('input', renderAdd);
+$('add-grid').addEventListener('change', (e) => {
+  const cb = e.target.closest('input[type=checkbox]');
+  if (!cb || cb.disabled) return;
+  cb.checked ? addPicked.add(Number(cb.value)) : addPicked.delete(Number(cb.value));
+  $('add-count').textContent = `${addPicked.size} ticked`;
+  $('add-go').disabled = !addPicked.size;
+});
+$('add-none').addEventListener('click', () => { addPicked.clear(); renderAdd(); });
+const closeAdd = () => $('add-modal').classList.remove('on');
+$('add-cancel').addEventListener('click', closeAdd);
+$('add-modal').addEventListener('click', (e) => { if (e.target.id === 'add-modal') closeAdd(); });
+
+$('add-go').addEventListener('click', async () => {
+  const btn = $('add-go');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const d = await api(`/admin/assignments/${addJobId}/add-sites`, { body: { site_ids: [...addPicked] } });
+    note($('add-note'),
+      `${d.added} site${d.added === 1 ? '' : 's'} added — this job now covers ${d.total}.`
+      + (d.skipped ? ` ${d.skipped} were already on it.` : ''), 'good');
+    addPicked.clear();
+    const { sites } = await api(`/admin/assignments/${addJobId}/sites`);
+    addExisting = new Map(sites.map(s => [s.site_id, s.status]));
+    renderAdd();
+    loadJobs(); loadStats();
+  } catch (e) { note($('add-note'), e.message, 'bad'); }
+  btn.textContent = 'Add to this job';
+  btn.disabled = !addPicked.size;
 });
 
 /* ---------------- removal requests ---------------- */
@@ -570,7 +708,7 @@ async function loadRequests() {
         <div class="move-bar">
           <span class="t-12 quiet">Finished with this request?</span>
           <button class="ghost small" data-close>Close — leave the rest with ${esc(r.employee_name.split(/\s+/)[0])}</button>
-          <button class="danger small" data-decline>Decline</button>
+          ${IS_SUPER ? '<button class="danger small" data-decline>Decline</button>' : ''}
         </div>
       </div>
     </div>`;
@@ -637,8 +775,10 @@ $('req-list').addEventListener('click', async (e) => {
   if (e.target.closest('[data-decline]')) {
     const why = prompt('Tell the employee why this is declined (optional)');
     if (why === null) return;
-    await api(`/admin/removal-requests/${id}/decline`, { body: { note: why } });
-    loadRequests(); loadStats();
+    try {
+      await api(`/admin/removal-requests/${id}/decline`, { body: { note: why } });
+      loadRequests(); loadStats();
+    } catch (err) { note(card.querySelector('[data-log]'), err.message, 'bad'); }
   }
 });
 
@@ -707,7 +847,7 @@ $('staff-go').addEventListener('click', async () => {
   try {
     await api('/admin/employees', {
       body: {
-        name: $('e-name').value.trim(), username: $('e-user').value.trim(),
+        name: $('e-name').value.trim(), username: $('e-user').value.trim().toLowerCase(),
         password: $('e-pass').value, phone: $('e-phone').value.trim(),
       },
     });

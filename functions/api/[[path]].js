@@ -69,13 +69,16 @@ async function readToken(env, token) {
   } catch { return null; }
 }
 
+/** `role` may be one role or a list of acceptable roles. */
 async function requireUser(request, env, role) {
   const header = request.headers.get('authorization') || '';
   const session = await readToken(env, header.replace(/^Bearer\s+/i, ''));
   if (!session) return null;
-  if (role && session.role !== role) return null;
-  const user = await env.DB.prepare('SELECT id, username, name, role, active, mute_until FROM users WHERE id = ?')
-    .bind(session.uid).first();
+  const allowed = role ? (Array.isArray(role) ? role : [role]) : null;
+  if (allowed && !allowed.includes(session.role)) return null;
+  const user = await env.DB.prepare(
+    'SELECT id, username, name, role, active, is_super, mute_until FROM users WHERE id = ?',
+  ).bind(session.uid).first();
   return user && user.active ? user : null;
 }
 
@@ -176,7 +179,7 @@ function appendReading(env, tab, { dateTime, siteName, employeeName, dgHours, ta
 }
 
 /**
- * A diesel-refilling entry — standalone, not tied to any admin job.
+ * A diesel-filling entry — standalone, not tied to any admin job.
  *   A Date time · B Site · C Credit litres · I Meter reading · K Driver
  */
 function appendRefill(env, tab, { dateTime, site, creditLitres, meterReading, employeeName }) {
@@ -207,13 +210,37 @@ function nextLocalHour(tz, hour) {
   return new Date(wall.getTime() - offset);
 }
 
-function stamp(tz = 'Asia/Kolkata') {
-  // "2026-09-16 14:05:00" in the operating timezone, for column A
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+/** "2026-10-05" -> "05 OCT 26". Empty string if the input is not a plain date. */
+function dmy(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+  return m ? `${m[3]} ${MONTHS[Number(m[2]) - 1]} ${m[1].slice(2)}` : '';
+}
+
+/** Wall clock in the operating timezone, as { date: "05 OCT 26", time: "21:23:00" }. */
+function clockNow(tz = 'Asia/Kolkata') {
+  const p = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz, year: '2-digit', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  }).formatToParts(new Date()).reduce((a, p) => (a[p.type] = p.value, a), {});
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+  }).formatToParts(new Date()).reduce((a, x) => (a[x.type] = x.value, a), {});
+  const hour = p.hour === '24' ? '00' : p.hour;
+  return {
+    date: `${p.day} ${MONTHS[Number(p.month) - 1]} ${p.year}`,
+    time: `${hour}:${p.minute}:${p.second}`,
+  };
+}
+
+/** Column A stamp, e.g. "05 OCT 26 21:23:00". */
+function stamp(tz = 'Asia/Kolkata') {
+  const c = clockNow(tz);
+  return `${c.date} ${c.time}`;
+}
+
+/** Same shape, but the date comes from the employee's picked reading date. */
+function stampOn(readingDate, tz = 'Asia/Kolkata') {
+  const c = clockNow(tz);
+  return `${dmy(readingDate) || c.date} ${c.time}`;
 }
 
 /* ------------------------------------------------------------------- routes */
@@ -252,7 +279,7 @@ async function route({ path, method, body, url, request, env }) {
   if (path === '/auth/login' && method === 'POST') {
     const username = String(body.username || '').trim().toLowerCase();
     const user = await env.DB.prepare(
-      'SELECT id, username, name, role, password_hash, active FROM users WHERE lower(username) = ?',
+      'SELECT id, username, name, role, password_hash, active, is_super FROM users WHERE lower(username) = ?',
     ).bind(username).first();
     if (!user || !user.active || !(await verifyPassword(String(body.password || ''), user.password_hash))) {
       return fail('Username or password is wrong', 401);
@@ -260,7 +287,13 @@ async function route({ path, method, body, url, request, env }) {
     const token = await signToken(env, {
       uid: user.id, role: user.role, exp: Date.now() + 1000 * 60 * 60 * 24 * 30,
     });
-    return json({ ok: true, token, user: { id: user.id, name: user.name, role: user.role, username: user.username } });
+    return json({
+      ok: true, token,
+      user: {
+        id: user.id, name: user.name, role: user.role,
+        username: user.username, is_super: !!user.is_super,
+      },
+    });
   }
 
   if (path === '/auth/me' && method === 'GET') {
@@ -280,8 +313,11 @@ async function route({ path, method, body, url, request, env }) {
   /* ---------- admin ---------- */
 
   if (path.startsWith('/admin/')) {
-    const admin = await requireUser(request, env, 'admin');
+    const admin = await requireUser(request, env, ['admin', 'superadmin']);
     if (!admin) return fail('Admin sign-in required', 401);
+    // Cancelling and declining are reserved for the superadmin account.
+    const isSuper = !!admin.is_super || admin.role === 'superadmin';
+    const superOnly = () => fail('Only a superadmin can do that', 403);
 
     if (path === '/admin/bootstrap' && method === 'GET') {
       const [tasks, employees, sites] = await Promise.all([
@@ -290,7 +326,7 @@ async function route({ path, method, body, url, request, env }) {
         env.DB.prepare('SELECT id, code, name, region FROM sites WHERE active = 1 ORDER BY name').all(),
       ]);
       return json({
-        ok: true, admin: { id: admin.id, name: admin.name },
+        ok: true, admin: { id: admin.id, name: admin.name, role: admin.role, is_super: isSuper },
         tasks: tasks.results, employees: employees.results, sites: sites.results,
       });
     }
@@ -358,7 +394,47 @@ async function route({ path, method, body, url, request, env }) {
       return json({ ok: true, assignments: results });
     }
 
+    // Which sites are already on one job, so "add more" can grey them out.
+    if (/^\/admin\/assignments\/\d+\/sites$/.test(path) && method === 'GET') {
+      const id = Number(path.split('/')[3]);
+      const { results } = await env.DB.prepare(
+        'SELECT site_id, status FROM assignment_sites WHERE assignment_id = ?',
+      ).bind(id).all();
+      return json({ ok: true, sites: results });
+    }
+
+    // Add further sites to an allocation that already exists, instead of
+    // creating a second job for the same employee and task.
+    if (/^\/admin\/assignments\/\d+\/add-sites$/.test(path) && method === 'POST') {
+      const id = Number(path.split('/')[3]);
+      const siteIds = [...new Set((body.site_ids || []).map(Number).filter(Boolean))];
+      if (!siteIds.length) return fail('Tick at least one site to add');
+
+      const a = await env.DB.prepare('SELECT id, status FROM assignments WHERE id = ?').bind(id).first();
+      if (!a) return fail('That job no longer exists', 404);
+      if (a.status === 'cancelled') return fail('That job was cancelled');
+
+      const before = await env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM assignment_sites WHERE assignment_id = ?',
+      ).bind(id).first();
+
+      await env.DB.batch(siteIds.map((siteId) => env.DB.prepare(
+        'INSERT OR IGNORE INTO assignment_sites (assignment_id, site_id) VALUES (?, ?)',
+      ).bind(id, siteId)));
+
+      const after = await env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM assignment_sites WHERE assignment_id = ?',
+      ).bind(id).first();
+
+      // A job that had closed itself reopens now that there is work on it again.
+      if (after.n > before.n && a.status === 'done') {
+        await env.DB.prepare("UPDATE assignments SET status = 'open' WHERE id = ?").bind(id).run();
+      }
+      return json({ ok: true, added: after.n - before.n, skipped: siteIds.length - (after.n - before.n), total: after.n });
+    }
+
     if (path.startsWith('/admin/assignments/') && method === 'DELETE') {
+      if (!isSuper) return superOnly();
       const id = Number(path.split('/').pop());
       await env.DB.prepare("UPDATE assignments SET status = 'cancelled' WHERE id = ?").bind(id).run();
       await env.DB.prepare("UPDATE removal_requests SET status = 'withdrawn' WHERE assignment_id = ? AND status = 'open'")
@@ -489,6 +565,7 @@ async function route({ path, method, body, url, request, env }) {
     }
 
     if (/^\/admin\/removal-requests\/\d+\/decline$/.test(path) && method === 'POST') {
+      if (!isSuper) return superOnly();
       const reqId = Number(path.split('/')[3]);
       const r = await env.DB.prepare("SELECT status FROM removal_requests WHERE id = ?").bind(reqId).first();
       if (!r) return fail('That request no longer exists', 404);
@@ -539,7 +616,7 @@ async function route({ path, method, body, url, request, env }) {
       for (const row of results) {
         try {
           const range = await appendReading(env, row.sheet_tab || env.SHEET_TAB || 'TNK FD', {
-            dateTime: `${row.reading_date} ${row.submitted_at.slice(11, 19)}`,
+            dateTime: `${dmy(row.reading_date) || row.reading_date} ${row.submitted_at.slice(11, 19)}`,
             siteName: row.site_name, employeeName: row.employee_name,
             dgHours: row.dg_hours, tankerReading: row.tanker_reading,
           });
@@ -672,17 +749,25 @@ async function route({ path, method, body, url, request, env }) {
       });
     }
 
-    // Read-only "Diesel Left" straight from the spreadsheet.
+    // Read-only live values straight from the spreadsheet:
+    //   value  — "Diesel Left" for the chosen site
+    //   tanker — the tanker reading in I2 (override with the TANKER_RANGE var)
     if (path === '/emp/diesel' && method === 'GET') {
       const siteId = Number(url.searchParams.get('site_id'));
       const site = siteId ? await env.DB.prepare('SELECT diesel_cell FROM sites WHERE id = ?').bind(siteId).first() : null;
-      const range = site?.diesel_cell || env.DIESEL_RANGE;
-      if (!range) return json({ ok: true, value: null, note: 'Diesel cell not configured yet' });
-      try {
-        return json({ ok: true, value: await readRange(env, range), range });
-      } catch (err) {
-        return json({ ok: true, value: null, note: err.message });
+      const dieselRange = site?.diesel_cell || env.DIESEL_RANGE;
+      const tankerRange = env.TANKER_RANGE || `'${env.SHEET_TAB || 'TNK FD'}'!I2`;
+
+      const out = { ok: true, value: null, tanker: null, range: dieselRange || null };
+      if (!dieselRange) {
+        out.note = 'Diesel cell not configured yet';
+      } else {
+        try { out.value = await readRange(env, dieselRange); }
+        catch (err) { out.note = err.message; }
       }
+      // The tanker cell is a single fixed cell and never blocks the response.
+      try { out.tanker = await readRange(env, tankerRange); } catch { /* optional */ }
+      return json(out);
     }
 
     if (path === '/emp/submit' && method === 'POST') {
@@ -728,7 +813,7 @@ async function route({ path, method, body, url, request, env }) {
       let sheet = { status: 'synced', range: '', error: null };
       try {
         sheet.range = await appendReading(env, site.sheet_tab || env.SHEET_TAB || 'TNK FD', {
-          dateTime: `${body.reading_date} ${stamp(env.TIMEZONE).slice(11)}`,
+          dateTime: stampOn(body.reading_date, env.TIMEZONE),
           siteName: site.name,
           employeeName: emp.name,
           dgHours: String(body.dg_hours),
@@ -744,7 +829,7 @@ async function route({ path, method, body, url, request, env }) {
     }
 
     /**
-     * Diesel refilling — a standalone entry the employee files anytime.
+     * Diesel filling — a standalone entry the employee files anytime.
      * Not linked to any allocated job or to the admin dashboard.
      *   Site -> B, Credit litres -> C, Meter reading -> I, Employee -> K, now -> A
      */

@@ -52,6 +52,16 @@
   .gauge .refresh:hover { background: var(--ink-700); }
   .gauge .caption { font-size: 12px; color: var(--dim); margin-top: 8px; }
   .gauge.stale .value { color: var(--dim); }
+  /* second live figure, read from I2 */
+  .gauge .second {
+    display: flex; align-items: baseline; gap: 7px;
+    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ink-700);
+  }
+  .gauge .second .v2 {
+    font-family: var(--display); font-weight: 700; font-size: 19px;
+    color: #d7e5e7; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  }
+  .gauge .second .u2 { font-family: var(--display); font-size: 12px; color: var(--dim); }
 
   main { padding: 0 16px; max-width: 620px; margin: 0 auto; }
   .screen { display: none; }
@@ -169,6 +179,10 @@
       <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.2" stroke-linecap="round"/><path d="M13.6 2.2v3.2h-3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </div>
+  <div class="second">
+    <span class="v2" id="tanker">—</span>
+    <span class="u2">tanker reading</span>
+  </div>
   <div class="caption" id="diesel-caption">Read live from the sheet</div>
 </div>
 
@@ -181,7 +195,7 @@
     </div>
     <button class="ghost block" id="go-refill" style="margin-bottom:16px; display:flex; align-items:center; justify-content:center; gap:8px">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="2.5" width="6" height="11" rx="1"/><path d="M8.5 6h2.2a1.3 1.3 0 0 1 1.3 1.3v3.4a1.1 1.1 0 0 0 2.2 0V5.4L12 3.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.5 6h4" stroke-linecap="round"/></svg>
-      Diesel refilling
+      Diesel filling
     </button>
     <div class="notice bad hidden" id="jobs-msg"></div>
     <div id="jobs"></div>
@@ -229,14 +243,14 @@
     </div>
   </div>
 
-  <!-- ==================================== refilling -->
+  <!-- ==================================== diesel filling -->
   <div class="screen" id="screen-refill">
     <button class="back" id="refill-back">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 3 5 8l5 5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       My jobs
     </button>
-    <h1>Diesel refilling</h1>
-    <p class="lede">A standalone refilling entry. Not tied to any allocated job.</p>
+    <h1>Diesel filling</h1>
+    <p class="lede">A standalone filling entry. Not tied to any allocated job.</p>
 
     <div class="field">
       <label for="r-site">Site</label>
@@ -257,7 +271,7 @@
     </p>
 
     <div class="submitbar">
-      <div class="inner"><button class="block" id="r-submit">Submit refilling</button></div>
+      <div class="inner"><button class="block" id="r-submit">Submit filling</button></div>
     </div>
   </div>
 
@@ -379,7 +393,7 @@ function jobActions(a, done, pending) {
 
   return `<div class="actions">
     <button data-open="${a.assignment_id}">Fill in ${pending} site${pending > 1 ? 's' : ''}</button>
-    ${done ? `<button class="ask" data-ask="${a.assignment_id}">Can't reach the rest</button>` : ''}
+    ${done ? `<button class="ask" data-ask="${a.assignment_id}">काम दूसरे को सौप दीजिये</button>` : ''}
   </div>`;
 }
 
@@ -472,16 +486,20 @@ setInterval(() => { if (DASH) renderReminder(); }, 60000);
 
 /* ---------------- diesel ---------------- */
 async function refreshDiesel(siteId) {
-  const el = $('diesel'), cap = $('diesel-caption');
-  el.textContent = '…';
+  const el = $('diesel'), tk = $('tanker'), cap = $('diesel-caption');
+  el.textContent = '…'; tk.textContent = '…';
   try {
     const d = await api('/emp/diesel' + (siteId ? '?site_id=' + siteId : ''));
     const blank = d.value === null || d.value === '';
     el.textContent = blank ? '—' : d.value;
+    tk.textContent = (d.tanker === null || d.tanker === '') ? '—' : d.tanker;
     $('gauge').classList.toggle('stale', blank);
     cap.textContent = d.note || (siteId && current?.siteName ? current.siteName : 'Read live from the sheet');
     if ($('f-diesel')) $('f-diesel').value = d.value ?? '';
-  } catch { el.textContent = '—'; cap.textContent = 'Could not reach the sheet'; }
+  } catch {
+    el.textContent = '—'; tk.textContent = '—';
+    cap.textContent = 'Could not reach the sheet';
+  }
 }
 $('diesel-refresh').onclick = () => refreshDiesel(current?.siteId);
 
@@ -508,7 +526,7 @@ $('jobs').addEventListener('click', async (e) => {
       loadDash();
     } catch (err) {
       note($('jobs-msg'), err.message, 'bad');
-      ask.disabled = false; ask.textContent = "Can't reach the rest";
+      ask.disabled = false; ask.textContent = 'काम दूसरे को सौप दीजिये';
     }
     return;
   }
@@ -576,7 +594,7 @@ $('f-submit').addEventListener('click', async () => {
   btn.disabled = false; btn.textContent = 'Submit reading';
 });
 
-/* ---------------- refilling ---------------- */
+/* ---------------- diesel filling ---------------- */
 const REFILL_QUEUE_KEY = 'fo_refill_queue';
 const refillQueue = {
   all: () => { try { return JSON.parse(localStorage.getItem(REFILL_QUEUE_KEY)) || []; } catch { return []; } },
@@ -628,7 +646,7 @@ $('r-submit').addEventListener('click', async () => {
       setTimeout(() => show('jobs'), 850);
     } else { note(el, e.message, 'bad'); }
   }
-  btn.disabled = false; btn.textContent = 'Submit refilling';
+  btn.disabled = false; btn.textContent = 'Submit filling';
 });
 
 /* ---------------- history ---------------- */

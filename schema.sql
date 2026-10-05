@@ -19,6 +19,8 @@ CREATE TABLE users (
   name          TEXT NOT NULL,
   phone         TEXT,
   active        INTEGER NOT NULL DEFAULT 1,
+  -- an admin with is_super = 1 may cancel allocations and decline requests
+  is_super      INTEGER NOT NULL DEFAULT 0,
   -- employee-controlled notification pause; ISO timestamp, only settable at night
   mute_until    TEXT,
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
