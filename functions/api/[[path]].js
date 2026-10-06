@@ -305,6 +305,15 @@ async function route({ path, method, body, url, request, env }) {
     const user = await requireUser(request, env);
     if (!user) return fail('Session expired', 401);
     if (String(body.password || '').length < 6) return fail('Use at least 6 characters', 400);
+
+    // Confirm whoever is at the keyboard knows the password being replaced,
+    // so a borrowed session cannot lock the real owner out.
+    const row = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+      .bind(user.id).first();
+    if (!row || !(await verifyPassword(String(body.current || ''), row.password_hash))) {
+      return fail('Current password is wrong', 403);
+    }
+
     await env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
       .bind(await hashPassword(body.password), user.id).run();
     return json({ ok: true });

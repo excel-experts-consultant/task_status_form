@@ -168,6 +168,7 @@
     </nav>
     <div class="who">
       <div class="name" id="who"></div>
+      <button class="quiet-btn" style="padding-left:0" id="pw-open">Change password</button>
       <button class="quiet-btn" style="padding-left:0" onclick="signOut()">Sign out</button>
     </div>
   </aside>
@@ -390,6 +391,33 @@ Ajmer Road Site, JP02, Rajasthan, 'TNK FD'!K5"></textarea>
       <span class="spring"></span>
       <button class="ghost" id="add-cancel">Close</button>
       <button id="add-go" disabled>Add to this job</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================ change password -->
+<div class="modal" id="pw-modal">
+  <div class="sheet" style="max-width:420px">
+    <div class="sheet-head">
+      <h3>Change password</h3>
+      <p>Your new password takes effect the next time you sign in.</p>
+    </div>
+    <div class="sheet-body">
+      <label class="t-12 quiet" for="pw-current">Current password</label>
+      <input type="password" id="pw-current" autocomplete="current-password" style="margin:4px 0 14px">
+
+      <label class="t-12 quiet" for="pw-new">New password</label>
+      <input type="password" id="pw-new" autocomplete="new-password" style="margin:4px 0 14px">
+
+      <label class="t-12 quiet" for="pw-again">Repeat new password</label>
+      <input type="password" id="pw-again" autocomplete="new-password" style="margin:4px 0 0">
+
+      <div class="notice hidden" id="pw-note" style="margin-top:14px"></div>
+    </div>
+    <div class="sheet-foot">
+      <span class="spring"></span>
+      <button class="ghost" id="pw-cancel">Close</button>
+      <button id="pw-go">Update password</button>
     </div>
   </div>
 </div>
@@ -652,6 +680,43 @@ $('add-go').addEventListener('click', async () => {
   } catch (e) { note($('add-note'), e.message, 'bad'); }
   btn.textContent = 'Add to this job';
   btn.disabled = !addPicked.size;
+});
+
+/* ---------------- change own password ---------------- */
+const pwFields = ['pw-current', 'pw-new', 'pw-again'];
+const closePw = () => $('pw-modal').classList.remove('on');
+
+$('pw-open').addEventListener('click', () => {
+  pwFields.forEach((id) => { $(id).value = ''; });
+  $('pw-note').className = 'notice hidden';
+  $('pw-modal').classList.add('on');
+  $('pw-current').focus();
+});
+$('pw-cancel').addEventListener('click', closePw);
+$('pw-modal').addEventListener('click', (e) => { if (e.target.id === 'pw-modal') closePw(); });
+pwFields.forEach((id) => $(id).addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('pw-go').click();
+}));
+
+$('pw-go').addEventListener('click', async () => {
+  const current = $('pw-current').value;
+  const next = $('pw-new').value;
+  const again = $('pw-again').value;
+
+  if (!current) return note($('pw-note'), 'Enter your current password.', 'bad');
+  if (next.length < 6) return note($('pw-note'), 'The new password needs at least 6 characters.', 'bad');
+  if (next !== again) return note($('pw-note'), 'The two new passwords do not match.', 'bad');
+  if (next === current) return note($('pw-note'), 'The new password is the same as the old one.', 'bad');
+
+  const btn = $('pw-go');
+  btn.disabled = true; btn.textContent = 'Updating…';
+  try {
+    await api('/auth/password', { body: { current, password: next } });
+    note($('pw-note'), 'Password updated. Use the new one next time you sign in.', 'good');
+    pwFields.forEach((id) => { $(id).value = ''; });
+  } catch (e) { note($('pw-note'), e.message, 'bad'); }
+  btn.textContent = 'Update password';
+  btn.disabled = false;
 });
 
 /* ---------------- removal requests ---------------- */
