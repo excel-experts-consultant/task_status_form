@@ -319,6 +319,35 @@ async function route({ path, method, body, url, request, env }) {
     return json({ ok: true });
   }
 
+  /* Change your own display name and sign-in username. The session token
+     carries the user id, not the username, so an existing session survives. */
+  if (path === '/auth/profile' && method === 'POST') {
+    const user = await requireUser(request, env);
+    if (!user) return fail('Session expired', 401);
+
+    const name = String(body.name || '').trim();
+    const username = String(body.username || '').trim().toLowerCase();
+    if (name.length < 2) return fail('Enter a name', 400);
+    if (!/^[a-z0-9._-]{3,}$/.test(username)) {
+      return fail('Username needs 3+ characters: letters, numbers, dot, dash or underscore', 400);
+    }
+
+    const row = await env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+      .bind(user.id).first();
+    if (!row || !(await verifyPassword(String(body.current || ''), row.password_hash))) {
+      return fail('Current password is wrong', 403);
+    }
+
+    const taken = await env.DB.prepare(
+      'SELECT id FROM users WHERE lower(username) = ? AND id <> ?',
+    ).bind(username, user.id).first();
+    if (taken) return fail('That username is already taken', 409);
+
+    await env.DB.prepare('UPDATE users SET name = ?, username = ? WHERE id = ?')
+      .bind(name, username, user.id).run();
+    return json({ ok: true, user: { ...user, name, username } });
+  }
+
   /* ---------- admin ---------- */
 
   if (path.startsWith('/admin/')) {

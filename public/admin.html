@@ -136,6 +136,17 @@
   .modal .add-grid label.has { opacity: .5; cursor: default; }
   .modal .add-grid label.has:hover { background: none; }
   .modal .add-grid .tag { margin-left: auto; font-size: 11px; color: var(--dim-light); }
+
+  /* ---- my-account dialog ---- */
+  .acct-block {
+    border-top: 1px solid var(--mist-100);
+    padding-top: 14px; margin-top: 16px;
+  }
+  .acct-block:first-of-type { margin-top: 0; }
+  .acct-title {
+    font-size: 12px; font-weight: 600; letter-spacing: .02em;
+    color: var(--dim-light); margin-bottom: 10px;
+  }
 </style>
 </head>
 <body class="console">
@@ -168,7 +179,7 @@
     </nav>
     <div class="who">
       <div class="name" id="who"></div>
-      <button class="quiet-btn" style="padding-left:0" id="pw-open">Change password</button>
+      <button class="quiet-btn" style="padding-left:0" id="pw-open">My account</button>
       <button class="quiet-btn" style="padding-left:0" onclick="signOut()">Sign out</button>
     </div>
   </aside>
@@ -395,29 +406,44 @@ Ajmer Road Site, JP02, Rajasthan, 'TNK FD'!K5"></textarea>
   </div>
 </div>
 
-<!-- ============================================ change password -->
+<!-- ============================================ my account -->
 <div class="modal" id="pw-modal">
-  <div class="sheet" style="max-width:420px">
+  <div class="sheet" style="max-width:440px">
     <div class="sheet-head">
-      <h3>Change password</h3>
-      <p>Your new password takes effect the next time you sign in.</p>
+      <h3>My account</h3>
+      <p>Your current password confirms either change.</p>
     </div>
     <div class="sheet-body">
       <label class="t-12 quiet" for="pw-current">Current password</label>
-      <input type="password" id="pw-current" autocomplete="current-password" style="margin:4px 0 14px">
+      <input type="password" id="pw-current" autocomplete="current-password" style="margin:4px 0 18px">
 
-      <label class="t-12 quiet" for="pw-new">New password</label>
-      <input type="password" id="pw-new" autocomplete="new-password" style="margin:4px 0 14px">
+      <div class="acct-block">
+        <div class="acct-title">Name and username</div>
+        <label class="t-12 quiet" for="ac-name">Display name</label>
+        <input type="text" id="ac-name" autocomplete="name" style="margin:4px 0 12px">
 
-      <label class="t-12 quiet" for="pw-again">Repeat new password</label>
-      <input type="password" id="pw-again" autocomplete="new-password" style="margin:4px 0 0">
+        <label class="t-12 quiet" for="ac-user">Username</label>
+        <input type="text" id="ac-user" autocomplete="username" spellcheck="false" style="margin:4px 0 12px">
 
-      <div class="notice hidden" id="pw-note" style="margin-top:14px"></div>
+        <button id="ac-go">Save name and username</button>
+        <div class="notice hidden" id="ac-note" style="margin-top:12px"></div>
+      </div>
+
+      <div class="acct-block">
+        <div class="acct-title">Password</div>
+        <label class="t-12 quiet" for="pw-new">New password</label>
+        <input type="password" id="pw-new" autocomplete="new-password" style="margin:4px 0 12px">
+
+        <label class="t-12 quiet" for="pw-again">Repeat new password</label>
+        <input type="password" id="pw-again" autocomplete="new-password" style="margin:4px 0 12px">
+
+        <button id="pw-go">Update password</button>
+        <div class="notice hidden" id="pw-note" style="margin-top:12px"></div>
+      </div>
     </div>
     <div class="sheet-foot">
       <span class="spring"></span>
       <button class="ghost" id="pw-cancel">Close</button>
-      <button id="pw-go">Update password</button>
     </div>
   </div>
 </div>
@@ -682,28 +708,68 @@ $('add-go').addEventListener('click', async () => {
   btn.disabled = !addPicked.size;
 });
 
-/* ---------------- change own password ---------------- */
-const pwFields = ['pw-current', 'pw-new', 'pw-again'];
+/* ---------------- my account ---------------- */
 const closePw = () => $('pw-modal').classList.remove('on');
 
 $('pw-open').addEventListener('click', () => {
-  pwFields.forEach((id) => { $(id).value = ''; });
+  const who = JSON.parse(localStorage.getItem('fo_user') || '{}');
+  $('ac-name').value = who.name || '';
+  $('ac-user').value = who.username || '';
+  ['pw-current', 'pw-new', 'pw-again'].forEach((id) => { $(id).value = ''; });
   $('pw-note').className = 'notice hidden';
+  $('ac-note').className = 'notice hidden';
   $('pw-modal').classList.add('on');
   $('pw-current').focus();
 });
 $('pw-cancel').addEventListener('click', closePw);
 $('pw-modal').addEventListener('click', (e) => { if (e.target.id === 'pw-modal') closePw(); });
-pwFields.forEach((id) => $(id).addEventListener('keydown', (e) => {
+
+/* Enter submits whichever block the caret is in. */
+['ac-name', 'ac-user'].forEach((id) => $(id).addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('ac-go').click();
+}));
+['pw-new', 'pw-again'].forEach((id) => $(id).addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('pw-go').click();
 }));
+
+/* Usernames are stored lowercase, so show that as the person types. */
+$('ac-user').addEventListener('input', (e) => {
+  const pos = e.target.selectionStart;
+  e.target.value = e.target.value.toLowerCase();
+  e.target.setSelectionRange(pos, pos);
+});
+
+$('ac-go').addEventListener('click', async () => {
+  const current = $('pw-current').value;
+  const name = $('ac-name').value.trim();
+  const username = $('ac-user').value.trim().toLowerCase();
+
+  if (!current) return note($('ac-note'), 'Enter your current password above.', 'bad');
+  if (name.length < 2) return note($('ac-note'), 'Enter a display name.', 'bad');
+  if (!/^[a-z0-9._-]{3,}$/.test(username)) {
+    return note($('ac-note'), 'Username needs 3+ characters: letters, numbers, dot, dash or underscore.', 'bad');
+  }
+
+  const btn = $('ac-go');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const d = await api('/auth/profile', { body: { current, name, username } });
+    // Keep the stored session in step so the sidebar and a reload agree.
+    const who = JSON.parse(localStorage.getItem('fo_user') || '{}');
+    localStorage.setItem('fo_user', JSON.stringify({ ...who, name, username }));
+    $('who').textContent = name + (IS_SUPER ? ' · superadmin' : '');
+    note($('ac-note'), `Saved. Sign in as "${username}" from now on.`, 'good');
+  } catch (e) { note($('ac-note'), e.message, 'bad'); }
+  btn.textContent = 'Save name and username';
+  btn.disabled = false;
+});
 
 $('pw-go').addEventListener('click', async () => {
   const current = $('pw-current').value;
   const next = $('pw-new').value;
   const again = $('pw-again').value;
 
-  if (!current) return note($('pw-note'), 'Enter your current password.', 'bad');
+  if (!current) return note($('pw-note'), 'Enter your current password above.', 'bad');
   if (next.length < 6) return note($('pw-note'), 'The new password needs at least 6 characters.', 'bad');
   if (next !== again) return note($('pw-note'), 'The two new passwords do not match.', 'bad');
   if (next === current) return note($('pw-note'), 'The new password is the same as the old one.', 'bad');
@@ -713,7 +779,9 @@ $('pw-go').addEventListener('click', async () => {
   try {
     await api('/auth/password', { body: { current, password: next } });
     note($('pw-note'), 'Password updated. Use the new one next time you sign in.', 'good');
-    pwFields.forEach((id) => { $(id).value = ''; });
+    // The old password no longer confirms anything, so carry the new one.
+    $('pw-current').value = next;
+    $('pw-new').value = ''; $('pw-again').value = '';
   } catch (e) { note($('pw-note'), e.message, 'bad'); }
   btn.textContent = 'Update password';
   btn.disabled = false;
