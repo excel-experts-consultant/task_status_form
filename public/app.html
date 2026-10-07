@@ -9,6 +9,10 @@
 <link rel="icon" href="./icon-192.png">
 <link rel="stylesheet" href="./css/app.css">
 <style>
+  /* Tanker reading sits beside diesel left at the same size, so it needs its
+     own hue at matching contrast (8.6:1 vs amber's 8.7:1 on the gauge). */
+  :root { --tanker: #4fc3dd; }
+
   body { padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
 
   .topbar {
@@ -52,16 +56,17 @@
   .gauge .refresh:hover { background: var(--ink-700); }
   .gauge .caption { font-size: 12px; color: var(--dim); margin-top: 8px; }
   .gauge.stale .value { color: var(--dim); }
-  /* second live figure, read from I2 */
+  /* second live figure, read from I2 — same weight as diesel left, own colour */
   .gauge .second {
-    display: flex; align-items: baseline; gap: 7px;
-    margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ink-700);
+    display: flex; align-items: flex-end; gap: 8px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ink-700);
   }
   .gauge .second .v2 {
-    font-family: var(--display); font-weight: 700; font-size: 19px;
-    color: #d7e5e7; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    font-family: var(--display); font-weight: 700; font-size: 40px; line-height: 0.95;
+    color: var(--tanker); font-variant-numeric: tabular-nums; letter-spacing: -0.03em;
   }
-  .gauge .second .u2 { font-family: var(--display); font-size: 12px; color: var(--dim); }
+  .gauge .second .u2 { font-family: var(--display); font-size: 13px; color: var(--dim); padding-bottom: 4px; }
+  .gauge.stale .second .v2 { color: var(--dim); }
 
   main { padding: 0 16px; max-width: 620px; margin: 0 auto; }
   .screen { display: none; }
@@ -259,10 +264,6 @@
     <div class="field">
       <label for="r-credit">Credit litres</label>
       <input type="number" inputmode="decimal" step="any" id="r-credit" placeholder="0">
-    </div>
-    <div class="field">
-      <label for="r-meter">Meter reading</label>
-      <input type="number" inputmode="decimal" step="any" id="r-meter" placeholder="0">
     </div>
 
     <div class="notice hidden" id="refill-msg"></div>
@@ -614,7 +615,7 @@ async function flushRefillQueue() {
 }
 
 $('go-refill').onclick = () => {
-  $('r-site').value = ''; $('r-credit').value = ''; $('r-meter').value = '';
+  $('r-site').value = ''; $('r-credit').value = '';
   $('refill-msg').classList.add('hidden');
   show('refill');
 };
@@ -625,12 +626,10 @@ $('r-submit').addEventListener('click', async () => {
   const payload = {
     site: $('r-site').value.trim(),
     credit_litres: $('r-credit').value,
-    meter_reading: $('r-meter').value,
     client_uuid: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
   };
   if (!payload.site) return note(el, 'Enter the site.', 'bad');
   if (payload.credit_litres === '') return note(el, 'Enter the credit litres.', 'bad');
-  if (payload.meter_reading === '') return note(el, 'Enter the meter reading.', 'bad');
 
   btn.disabled = true; btn.textContent = 'Submitting…';
   try {

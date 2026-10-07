@@ -180,10 +180,12 @@ function appendReading(env, tab, { dateTime, siteName, employeeName, dgHours, ta
 
 /**
  * A diesel-filling entry — standalone, not tied to any admin job.
- *   A Date time · B Site · C Credit litres · I Meter reading · K Driver
+ *   A Date time · B Site · C Credit litres · K Driver
+ * Column I is left alone here: the meter reading field was removed from the
+ * filling screen, and writing '' would blank whatever the sheet already holds.
  */
-function appendRefill(env, tab, { dateTime, site, creditLitres, meterReading, employeeName }) {
-  return writeRow(env, tab, { A: dateTime, B: site, C: creditLitres, I: meterReading, K: employeeName || '' });
+function appendRefill(env, tab, { dateTime, site, creditLitres, employeeName }) {
+  return writeRow(env, tab, { A: dateTime, B: site, C: creditLitres, K: employeeName || '' });
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -874,10 +876,8 @@ async function route({ path, method, body, url, request, env }) {
     if (path === '/emp/refill' && method === 'POST') {
       const site = String(body.site || '').trim();
       const creditLitres = String(body.credit_litres || '').trim();
-      const meterReading = String(body.meter_reading || '').trim();
       if (!site) return fail('Enter the site');
       if (!creditLitres) return fail('Enter the credit litres');
-      if (!meterReading) return fail('Enter the meter reading');
 
       if (body.client_uuid) {
         const dupe = await env.DB.prepare('SELECT id FROM refills WHERE client_uuid = ?').bind(body.client_uuid).first();
@@ -887,13 +887,13 @@ async function route({ path, method, body, url, request, env }) {
       const row = await env.DB.prepare(`
         INSERT INTO refills (employee_id, site_text, credit_litres, meter_reading, client_uuid)
         VALUES (?, ?, ?, ?, ?) RETURNING id
-      `).bind(emp.id, site, creditLitres, meterReading, body.client_uuid || null).first();
+      `).bind(emp.id, site, creditLitres, '', body.client_uuid || null).first();
 
       let sheet = { status: 'synced', range: '', error: null };
       try {
         sheet.range = await appendRefill(env, env.SHEET_TAB || 'TNK FD', {
           dateTime: stamp(env.TIMEZONE),
-          site, creditLitres, meterReading, employeeName: emp.name,
+          site, creditLitres, employeeName: emp.name,
         });
       } catch (err) {
         sheet = { status: 'failed', range: '', error: err.message };
