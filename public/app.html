@@ -258,8 +258,8 @@
     <p class="lede">A standalone filling entry. Not tied to any allocated job.</p>
 
     <div class="field">
-      <label for="r-site">Site</label>
-      <input type="text" id="r-site" placeholder="Site name" autocomplete="off">
+      <label for="r-site">Pump Name</label>
+      <input type="text" id="r-site" placeholder="Pump name" autocomplete="off">
     </div>
     <div class="field">
       <label for="r-credit">Credit litres</label>
@@ -628,7 +628,7 @@ $('r-submit').addEventListener('click', async () => {
     credit_litres: $('r-credit').value,
     client_uuid: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
   };
-  if (!payload.site) return note(el, 'Enter the site.', 'bad');
+  if (!payload.site) return note(el, 'Enter the pump name.', 'bad');
   if (payload.credit_litres === '') return note(el, 'Enter the credit litres.', 'bad');
 
   btn.disabled = true; btn.textContent = 'Submitting…';

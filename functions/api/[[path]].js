@@ -871,12 +871,13 @@ async function route({ path, method, body, url, request, env }) {
     /**
      * Diesel filling — a standalone entry the employee files anytime.
      * Not linked to any allocated job or to the admin dashboard.
-     *   Site -> B, Credit litres -> C, Meter reading -> I, Employee -> K, now -> A
+     *   Pump name -> B, Credit litres -> C, Employee -> K, now -> A
+     *   (column I is left for a sheet formula)
      */
     if (path === '/emp/refill' && method === 'POST') {
       const site = String(body.site || '').trim();
       const creditLitres = String(body.credit_litres || '').trim();
-      if (!site) return fail('Enter the site');
+      if (!site) return fail('Enter the pump name');
       if (!creditLitres) return fail('Enter the credit litres');
 
       if (body.client_uuid) {
